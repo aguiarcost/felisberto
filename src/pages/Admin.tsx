@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Settings } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { AdminPasswordDialog } from '@/components/AdminPasswordDialog';
 import { CreateQuestionForm } from '@/components/CreateQuestionForm';
@@ -12,6 +12,7 @@ import { BaseConhecimento } from '@/types/chat';
 import felisbertoAvatar from '@/assets/felisberto_avatar.png';
 
 const Admin = () => {
+  const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [faqs, setFaqs] = useState<BaseConhecimento[]>([]);
   const [docsCount, setDocsCount] = useState(0);
@@ -41,6 +42,7 @@ const Admin = () => {
       <AdminPasswordDialog
         open={!isAuthenticated}
         onAuthenticated={() => setIsAuthenticated(true)}
+        onCancel={() => navigate('/')}
       />
     );
   }

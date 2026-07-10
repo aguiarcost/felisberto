@@ -15,11 +15,12 @@ import { toast } from 'sonner';
 interface AdminPasswordDialogProps {
   open: boolean;
   onAuthenticated: () => void;
+  onCancel: () => void;
 }
 
 const ADMIN_PASSWORD = 'decivil2024';
 
-export function AdminPasswordDialog({ open, onAuthenticated }: AdminPasswordDialogProps) {
+export function AdminPasswordDialog({ open, onAuthenticated, onCancel }: AdminPasswordDialogProps) {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -40,8 +41,13 @@ export function AdminPasswordDialog({ open, onAuthenticated }: AdminPasswordDial
   };
 
   return (
-    <Dialog open={open}>
-      <DialogContent className="sm:max-w-md" onInteractOutside={(e) => e.preventDefault()}>
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) onCancel();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Lock className="h-5 w-5" />
@@ -63,9 +69,14 @@ export function AdminPasswordDialog({ open, onAuthenticated }: AdminPasswordDial
               autoFocus
             />
           </div>
-          <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? 'A verificar...' : 'Entrar'}
-          </Button>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" className="flex-1" onClick={onCancel}>
+              Cancelar
+            </Button>
+            <Button type="submit" className="flex-1" disabled={isLoading}>
+              {isLoading ? 'A verificar...' : 'Entrar'}
+            </Button>
+          </div>
         </form>
       </DialogContent>
     </Dialog>
