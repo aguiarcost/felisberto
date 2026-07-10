@@ -83,7 +83,7 @@ export async function geminiChat(
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
-const EMBED_MODEL = "models/text-embedding-004";
+const EMBED_MODEL = "models/gemini-embedding-001";
 
 // Split text into overlapping, sentence-aware chunks for embedding.
 export function chunkText(text: string, maxChars = 900, overlap = 150): string[] {
