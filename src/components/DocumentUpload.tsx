@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react';
-import { Upload, FileText, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Upload, FileText, Loader2, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { processDocument } from '@/lib/api';
+import { processDocument, reindexDocuments } from '@/lib/api';
 import { Progress } from '@/components/ui/progress';
 
 interface DocumentUploadProps {
@@ -26,7 +27,22 @@ const ACCEPTED_EXTENSIONS = '.pdf,.docx,.txt';
 export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [isReindexing, setIsReindexing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleReindex = async () => {
+    setIsReindexing(true);
+    try {
+      const res = await reindexDocuments();
+      toast.success(
+        `Índice reconstruído: ${res.documents} documento(s), ${res.totalChunks} excertos.`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Erro ao reindexar');
+    } finally {
+      setIsReindexing(false);
+    }
+  };
 
   const processFile = async (file: File): Promise<{ success: boolean; error?: string }> => {
     return new Promise((resolve) => {
@@ -203,9 +219,31 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
           )}
 
           <p className="text-xs text-muted-foreground">
-            O conteúdo dos documentos será extraído e adicionado à base de conhecimento.
-            O nome de cada ficheiro será usado como pergunta.
+            O conteúdo dos documentos é extraído e indexado para pesquisa semântica.
+            Documentos novos são indexados automaticamente ao carregar.
           </p>
+
+          <div className="flex items-center justify-between gap-2 border-t pt-4">
+            <div className="text-xs text-muted-foreground">
+              Reconstruir o índice semântico de todos os documentos (use após importar
+              dados ou se a pesquisa parecer desatualizada).
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleReindex}
+              disabled={isReindexing || isUploading}
+              className="shrink-0"
+            >
+              {isReindexing ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4 mr-2" />
+              )}
+              Reindexar
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

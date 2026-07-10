@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { Env, json, preflight, geminiExtractPdf } from "../_shared";
+import { Env, json, preflight, geminiExtractPdf, indexDocument } from "../_shared";
 
 const DOCX_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -86,19 +86,37 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       .bind(titulo)
       .first<{ id: string }>();
 
+    let docId: string;
     if (existing) {
       await env.DB.prepare("UPDATE documentos SET conteudo = ?, tipo_ficheiro = ? WHERE id = ?")
         .bind(conteudo, tipoFicheiro, existing.id)
         .run();
+      docId = existing.id;
     } else {
-      await env.DB.prepare(
-        "INSERT INTO documentos (titulo, conteudo, tipo_ficheiro) VALUES (?, ?, ?)"
+      const row = await env.DB.prepare(
+        "INSERT INTO documentos (titulo, conteudo, tipo_ficheiro) VALUES (?, ?, ?) RETURNING id"
       )
         .bind(titulo, conteudo, tipoFicheiro)
-        .run();
+        .first<{ id: string }>();
+      docId = row!.id;
     }
 
-    return json({ success: true, message: `Documento "${fileName}" processado e guardado.` });
+    // Chunk + embed for semantic search. If embedding fails, keep the document
+    // anyway (it can be re-indexed later via /api/reindex).
+    let chunks = 0;
+    let indexWarning: string | undefined;
+    try {
+      chunks = await indexDocument(env, { id: docId, titulo, conteudo });
+    } catch (e) {
+      indexWarning = e instanceof Error ? e.message : "Falha na indexação semântica";
+    }
+
+    return json({
+      success: true,
+      message: `Documento "${fileName}" processado e guardado${chunks ? ` (${chunks} excertos indexados)` : ""}.`,
+      chunks,
+      indexWarning,
+    });
   } catch (e) {
     return json({ success: false, error: e instanceof Error ? e.message : "Unknown error" }, 500);
   }

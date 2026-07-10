@@ -55,6 +55,15 @@ export function processDocument(
   fileName: string,
   fileType: string,
   fileContent: string
-): Promise<{ success: boolean; message?: string; error?: string }> {
+): Promise<{ success: boolean; message?: string; error?: string; chunks?: number }> {
   return postJson('/api/process-document', { fileName, fileType, fileContent });
+}
+
+export function reindexDocuments(): Promise<{
+  success: boolean;
+  documents: number;
+  totalChunks: number;
+  results: { titulo: string; chunks: number; error?: string }[];
+}> {
+  return postJson('/api/reindex', {});
 }
