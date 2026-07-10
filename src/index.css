@@ -1,0 +1,110 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 30 100% 97%;
+    --foreground: 20 14% 20%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 20 14% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 14% 20%;
+
+    --primary: 27 100% 47%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 30 50% 93%;
+    --secondary-foreground: 20 14% 20%;
+
+    --muted: 30 30% 94%;
+    --muted-foreground: 20 10% 45%;
+
+    --accent: 27 100% 47%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 30 30% 85%;
+    --input: 30 30% 85%;
+    --ring: 27 100% 47%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 240 5.3% 26.1%;
+    --sidebar-primary: 27 100% 47%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 30 50% 95%;
+    --sidebar-accent-foreground: 20 14% 20%;
+    --sidebar-border: 30 30% 85%;
+    --sidebar-ring: 27 100% 47%;
+
+    /* Chat specific */
+    --chat-user: 27 100% 47%;
+    --chat-user-foreground: 0 0% 100%;
+    --chat-assistant: 30 50% 95%;
+    --chat-assistant-foreground: 20 14% 20%;
+  }
+
+  .dark {
+    --background: 20 14% 10%;
+    --foreground: 30 30% 95%;
+
+    --card: 20 14% 14%;
+    --card-foreground: 30 30% 95%;
+
+    --popover: 20 14% 14%;
+    --popover-foreground: 30 30% 95%;
+
+    --primary: 27 100% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 20 14% 18%;
+    --secondary-foreground: 30 30% 95%;
+
+    --muted: 20 14% 18%;
+    --muted-foreground: 30 20% 60%;
+
+    --accent: 27 100% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62.8% 40%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 20 14% 25%;
+    --input: 20 14% 25%;
+    --ring: 27 100% 50%;
+
+    --sidebar-background: 20 14% 10%;
+    --sidebar-foreground: 30 30% 95%;
+    --sidebar-primary: 27 100% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 20 14% 18%;
+    --sidebar-accent-foreground: 30 30% 95%;
+    --sidebar-border: 20 14% 25%;
+    --sidebar-ring: 27 100% 50%;
+
+    --chat-user: 27 100% 50%;
+    --chat-user-foreground: 0 0% 100%;
+    --chat-assistant: 20 14% 18%;
+    --chat-assistant-foreground: 30 30% 95%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
