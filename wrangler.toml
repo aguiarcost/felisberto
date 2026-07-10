@@ -1,0 +1,15 @@
+name = "felisberto"
+compatibility_date = "2025-05-05"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
+
+# Cloudflare D1 database binding.
+# The functions access it as `env.DB`.
+[[d1_databases]]
+binding = "DB"
+database_name = "felisberto"
+database_id = "8af79ed8-e8c3-4f5d-b6da-b3bf3c88e069"
+
+# NOTE: GEMINI_API_KEY is NOT stored here. Add it as an encrypted
+# environment variable / secret in the Cloudflare Pages dashboard
+# (Settings -> Variables and Secrets), so it never reaches the browser.

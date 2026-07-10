@@ -1,0 +1,110 @@
+[
+  {
+    "pergunta": "Como registar um convidado no sistema informático?",
+    "resposta": "O registo de convidados é feito online através da página do SI do Técnico.",
+    "email": "",
+    "modelo_email": "Aceda a: https://si.tecnico.ulisboa.pt/servicos/autenticacao-e-acesso/pessoa-externa-convidado/"
+  },
+  {
+    "pergunta": "Como posso pedir estacionamento?",
+    "resposta": "O pedido de estacionamento deve ser feito com pelo menos 24 horas de antecedência.",
+    "email": "estacionamento@tecnico.ulisboa.pt",
+    "modelo_email": "Assunto: Pedido de estacionamento\\n\\nExmos. Senhores,\\n\\nVenho por este meio solicitar o acesso ao parque de estacionamento para o dia [data], no âmbito da minha atividade no DECivil.\\n\\nCom os melhores cumprimentos,\\n[Seu nome]"
+  },
+  {
+    "pergunta": "Como comunicar uma avaria no telefone?",
+    "resposta": "As avarias em telefones devem ser comunicadas ao Núcleo de Comunicações.",
+    "email": "nucleo.comunicacoes@tecnico.ulisboa.pt",
+    "modelo_email": "Assunto: Avaria no telefone\\n\\nExmos. Senhores,\\n\\nVenho por este meio reportar uma avaria no telefone [número ou localização], que se encontra [descrição da avaria].\\n\\nCom os melhores cumprimentos,\\n[Seu nome]"
+  },
+  {
+    "pergunta": "Como posso reservar uma sala?",
+    "resposta": "Se a sala que pretende reservar estiver na depedência do GOP (salas de aulas), os pedidos de reserva devem ser enviados diretamente ao GOP.\n\nSe a sala pretendida estiver na dependência do DECivil (salas de reuniões) o pedido deve ser enviado ao secretariado da ACSUTA.",
+    "email": "gop@tecnico.ulisboa.pt",
+    "modelo_email": "Assunto: Pedido de reserva de sala\\n\\nExmos. Senhores,\\n\\nVenho por este meio solicitar a reserva de uma sala para [finalidade] no dia [data], entre as [hora de início] e as [hora de fim].\\n\\nCom os melhores cumprimentos,\\n[Seu nome]"
+  },
+  {
+    "pergunta": "Como pedir uma declaração à DRH?",
+    "resposta": "As declarações devem ser pedidas diretamente ao Núcleo de Declarações da DRH.",
+    "email": "nudi.declaracoes@drh.tecnico.ulisboa.pt",
+    "modelo_email": "Assunto: Pedido de declaração\\n\\nExmos. Senhores,\\n\\nVenho por este meio solicitar uma declaração relativa a [especificar o conteúdo da declaração].\\n\\nCom os melhores cumprimentos,\\n[Seu nome]"
+  },
+  {
+    "pergunta": "Como posso pedir apoio informático?",
+    "resposta": "Todos os pedidos de apoio informático devem ser dirigidos à equipa técnica do DECivil.",
+    "email": "apoiotecnico@civil.tecnico.ulisboa.pt",
+    "modelo_email": "Assunto: Pedido de apoio informático\\n\\nBoa tarde,\\n\\nSolicito apoio informático relativamente a [descrever o problema].\\n\\nCom os melhores cumprimentos,\\n[Seu nome]"
+  },
+  {
+    "pergunta": "Como pedir acesso Wi-Fi para reuniões?",
+    "resposta": "O acesso Wi-Fi temporário para reuniões deve ser solicitado à DSI.",
+    "email": "dsi@tecnico.ulisboa.pt",
+    "modelo_email": "Assunto: Acesso Wi-Fi temporário\\n\\nExmos. Senhores,\\n\\nSolicito o acesso Wi-Fi temporário para a reunião agendada no dia [data], com participantes externos.\\n\\nCom os melhores cumprimentos,\\n[Seu nome]"
+  },
+  {
+    "pergunta": "Como posso pedir acumulação de funções / lecionação de curso breve",
+    "resposta": "Os pedidos de acumulação de funções devem ser submetidos pelo docente via Fénix Connect\n\nNota importante: Estes pedidos exigem o parecer prévio da Coordenação da Área Científica que deve ser solicitado ao secretariado da ACSUTA através do email patricia.nunes@tecnico.ulisboa.pt. O pedido de acumulação de funções apenas deve ser submetido no Connect após receção do parecer.\n\nPara aceder ao Connect: https://connect.tecnico.ulisboa.pt/",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como retificar notas ou lançar notas fora de prazo?",
+    "resposta": "Para retificar notas ou lançar notas fora do prazo normal, deve utilizar os formulários disponíveis na página dos serviços académicos.\n\nProcedimento:\n1. Preencha o formulário adequado (retificação de pauta ou lançamento fora de prazo)\n2. Justifique o motivo da alteração/atraso\n3. Envie o formulário preenchido ao secretariado da Área Científica (ACSUTA)\n\nO secretariado encaminhará o pedido para a área de graduação para processamento.\n\nPara mais informações, consulte a página: \nhttps://graduacao.tecnico.ulisboa.pt/formularios/",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como procurar contactos de pessoas do IST através do Fénix",
+    "resposta": "Para procurar contactos de pessoas do IST através do Fénix:\n\n1. Aceda ao Fénix: https://fenix.tecnico.ulisboa.pt\n2. No menu principal, selecione o separador \"Comunicação\"\n3. Clique em \"Procurar Pessoa\"\n4. Introduza o nome ou parte do nome da pessoa que pretende encontrar\n5. Os resultados mostrarão os contactos disponíveis (email institucional, gabinete, extensão telefónica)",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como consultar os alunos inscritos em época especial?",
+    "resposta": "Para consultar os alunos inscritos em época especial através do Fénix:\n\n1. Aceda ao Fénix: https://fenix.tecnico.ulisboa.pt\n2. Vá ao separador \"Docência\"\n3. Selecione a Unidade Curricular (UC) pretendida\n4. No menu lateral, clique em \"Alunos\"\n5. Clique em \"Opções\"\n6. Selecione \"Época Especial\"\n\nA lista apresentada mostrará todos os alunos inscritos em época especial para essa UC, incluindo o seu número, nome e curso.",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como entregar despesas para reembolso/fundo de maneio?",
+    "resposta": "Para entregar despesas para reembolso ou fundo de maneio, siga estas regras:\n\n**Documentação necessária:**\n- Fatura/recibo original em nome do Técnico (NIF: 501507930)\n- Justificação da despesa\n\n**Formato de entrega:**\n- Agrafe todos os documentos a uma folha A4\n- Escreva no topo da folha a identificação do projeto/centro de custo\n\n**Regras específicas:**\n- **Transportes:** Indique o itinerário completo (origem-destino) e o motivo da deslocação\n- **Alimentação:** Indique os nomes de todos os participantes na refeição\n- **Limite:** Máximo de 25€ por pessoa para refeições\n\nEntregue a documentação ao secretariado da ACSUTA para processamento.",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como posso pedir licença sabática",
+    "resposta": "O período para pedidos de licença sabática decorre habitualmente entre Dezembro e Janeiro. O pedido deve ser feito através do Connect, acompanhado de um plano de trabalhos detalhado.\n\nNota importante: O pedido requer parecer da Área Científica. Deve contactar previamente a ACSUTA através do email patricia.nunes@tecnico.ulisboa.pt para obter o parecer antes de submeter o pedido no Connect.\n\nPara mais informações sobre licenças sabáticas, consulte o regulamento disponível na página da DRH.",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como pedir férias?",
+    "resposta": "O pedido de férias deve ser feito através do formulário próprio disponibilizado pela DRH (Direção de Recursos Humanos).\n\nApós preenchimento do formulário, deve entregá-lo ao secretariado da Área Científica (ACSUTA).\n\nPara obter o formulário de férias, consulte: https://drh.tecnico.ulisboa.pt/docentes/formularios/",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como posso fazer fotocópias de exames?",
+    "resposta": "Existem duas opções para fazer fotocópias de exames:\n\n**Opção 1 - Reprografia (preferencial):**\n- A entrega do exame na reprografia deve ser feita pelo docente com pelo menos 24 horas de antecedência\n- Solicite ao secretariado da ACSUTA a emissão de uma requisição interna.\n\n**Opção 2 - Via Docente:**\n- O docente pode utilizar as fotocopiadoras disponíveis nos departamentos\n\n**Nota:** Para grandes quantidades, a reprografia é sempre preferível por questões de custo e eficiência.\n\nContacto da reprografia: 2020",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como lançar notas finais no Fénix",
+    "resposta": "Tutorial disponível em https://l1nq.com/57S0U",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como posso inscrever alunos nos turnos das UC",
+    "resposta": "Aceder ao Fénix, e no separador docência, escolher a UC. \n\nNo menu do lado esquerdo, selecione \"turnos\". Escolha o turno em que pretende inscrever o aluno, no fim da lista de alunos inscritos encontra a opção \"adicionar aluno a este turno\". Bastará colocar o número do aluno para o inscrever.\n\nSe o turno estiver lotado, é sempre possível pedir a abertura de mais vagas ao GOP.",
+    "email": null,
+    "modelo_email": null
+  },
+  {
+    "pergunta": "Como consultar o recibo de vencimento?",
+    "resposta": "No site do IST, escolher \"Aplicações\" no canto superior direito. Selecionar \"Portal SAP\".\nO recibo de vencimento pode ser consultado na opçõa \"Dados Salariais Trabalhador\"",
+    "email": null,
+    "modelo_email": null
+  }
+]
