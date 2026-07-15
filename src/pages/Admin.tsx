@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Settings } from 'lucide-react';
+import { ArrowLeft, Settings, LogOut } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { AdminPasswordDialog } from '@/components/AdminPasswordDialog';
@@ -8,17 +8,24 @@ import { EditQuestionForm } from '@/components/EditQuestionForm';
 import { DocumentUpload } from '@/components/DocumentUpload';
 import { DocumentList } from '@/components/DocumentList';
 import { ExportImport } from '@/components/ExportImport';
-import { getFaqs, getDocuments, type DocItem } from '@/lib/api';
+import { getFaqs, getDocuments, getAdminToken, adminLogout, UnauthorizedError, type DocItem } from '@/lib/api';
 import { BaseConhecimento } from '@/types/chat';
 import felisbertoAvatar from '@/assets/felisberto_avatar.png';
 
 const Admin = () => {
   const navigate = useNavigate();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Resume an existing session (token in sessionStorage) instead of asking again.
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!getAdminToken());
   const [faqs, setFaqs] = useState<BaseConhecimento[]>([]);
   const [documents, setDocuments] = useState<DocItem[]>([]);
   const [docsCount, setDocsCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+
+  const handleLogout = () => {
+    adminLogout();
+    setIsAuthenticated(false);
+    navigate('/');
+  };
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -31,6 +38,10 @@ const Admin = () => {
       setDocsCount(docsCount);
       setDocuments(documents);
     } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        setIsAuthenticated(false);
+        return;
+      }
       console.error('Erro ao carregar dados:', error);
     } finally {
       setIsLoading(false);
@@ -75,12 +86,18 @@ const Admin = () => {
                 </p>
               </div>
             </div>
-            <Link to="/">
-              <Button variant="outline">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Voltar
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" onClick={handleLogout}>
+                <LogOut className="h-4 w-4 mr-2" />
+                Terminar sessão
               </Button>
-            </Link>
+              <Link to="/">
+                <Button variant="outline">
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Voltar
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
       </header>

@@ -3,10 +3,13 @@ import {
   json,
   preflight,
   normalizeText,
+  buildTerms,
   extractExcerpt,
   geminiChat,
   geminiEmbedQuery,
   cosineSim,
+  parseEmbedding,
+  rrfFuse,
 } from "../_shared";
 
 interface FAQ {
@@ -29,32 +32,12 @@ interface ChunkRow {
   embedding: string;
 }
 
-// Portuguese stopwords + generic question words that add noise to lexical scoring.
-const STOPWORDS = new Set([
-  "como", "para", "por", "uma", "uns", "umas", "que", "qual", "quais", "quando",
-  "onde", "porque", "posso", "pode", "podem", "fazer", "faco", "tenho", "ter",
-  "sobre", "isto", "isso", "aqui", "ali", "com", "sem", "dos", "das", "nos",
-  "nas", "num", "numa", "meu", "minha", "seu", "sua", "este", "esta", "esse",
-  "essa", "aos", "the", "and", "preciso", "gostaria", "queria", "obter",
-]);
+/** Minimum cosine similarity for a FAQ to be considered "really about" the question. */
+const FAQ_CONFIDENCE = 0.65;
+/** Minimum cosine similarity for a document passage to be worth showing the model. */
+const DOC_FLOOR = 0.5;
 
-function buildTerms(message: string): string[] {
-  const base = normalizeText(message)
-    .split(/\s+/)
-    .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
-  const stems = base.map((term) => {
-    if (term.endsWith("coes")) return term.slice(0, -4);
-    if (term.endsWith("oes")) return term.slice(0, -3);
-    if (term.endsWith("ade")) return term.slice(0, -3);
-    if (term.endsWith("ao")) return term.slice(0, -2);
-    if (term.endsWith("es")) return term.slice(0, -2);
-    if (term.endsWith("s")) return term.slice(0, -1);
-    return term;
-  });
-  return [...new Set([...base, ...stems])];
-}
-
-// POST /api/chat  { message } -> { resposta, email, modelo_email, sources }
+// POST /api/chat  { message } -> { resposta, email, modelo_email, sources, retrieval }
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     const { message } = (await request.json()) as { message?: string };
@@ -62,28 +45,75 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       return json({ error: "Mensagem inválida" }, 400);
     }
 
+    const allTerms = buildTerms(message);
+    const normMsg = normalizeText(message).trim().replace(/\s+/g, " ");
+
     const kbRes = await env.DB.prepare("SELECT * FROM base_conhecimento").all<FAQ>();
     const knowledgeBase = kbRes.results ?? [];
-    const allTerms = buildTerms(message);
 
-    // --- FAQ retrieval (lexical, stopword-filtered) ---
-    const relevantFAQs = knowledgeBase
-      .map((entry) => {
-        const p = normalizeText(entry.pergunta);
-        const r = normalizeText(entry.resposta);
-        let score = 0;
-        for (const term of allTerms) {
-          if (p.includes(term)) score += 2;
-          if (r.includes(term)) score += 1;
-        }
-        return { ...entry, score };
-      })
-      .filter((e) => e.score >= 1)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
+    // --- Exact match short-circuit (dropdown / copied question) ---
+    const exactFaq = knowledgeBase.find(
+      (f) => normalizeText(f.pergunta).trim().replace(/\s+/g, " ") === normMsg
+    );
 
-    // --- Document retrieval: semantic first, lexical fallback ---
-    type Passage = { titulo: string; texto: string; score: number };
+    // --- Embed the query once; reused for FAQs and documents ---
+    let qVec: number[] = [];
+    try {
+      qVec = await geminiEmbedQuery(env, message);
+    } catch {
+      qVec = [];
+    }
+
+    const lexScore = (haystacks: [string, number][]): number => {
+      let s = 0;
+      for (const [text, weight] of haystacks) {
+        const n = normalizeText(text);
+        for (const t of allTerms) if (n.includes(t)) s += weight;
+      }
+      return s;
+    };
+
+    /* ---------------- FAQ retrieval (hybrid) ---------------- */
+    const faqSemMap = new Map<string, number>();
+    if (qVec.length > 0 && knowledgeBase.length > 0) {
+      const embRes = await env.DB.prepare(
+        "SELECT faq_id, embedding FROM faq_embeddings"
+      ).all<{ faq_id: string; embedding: string }>();
+      for (const row of embRes.results ?? []) {
+        faqSemMap.set(row.faq_id, cosineSim(qVec, parseEmbedding(row.embedding)));
+      }
+    }
+
+    const faqLexMap = new Map<string, number>();
+    for (const f of knowledgeBase) {
+      faqLexMap.set(
+        f.id,
+        lexScore([
+          [f.pergunta, 2],
+          [f.resposta, 1],
+        ])
+      );
+    }
+
+    const faqFused = rrfFuse(
+      knowledgeBase.map((f) => ({ id: f.id, score: faqLexMap.get(f.id) ?? 0 })),
+      knowledgeBase.map((f) => ({ id: f.id, score: faqSemMap.get(f.id) ?? 0 }))
+    );
+
+    const rankedFaqs = knowledgeBase
+      .map((f) => ({
+        ...f,
+        fused: faqFused.get(f.id) ?? 0,
+        sem: faqSemMap.get(f.id) ?? 0,
+        lex: faqLexMap.get(f.id) ?? 0,
+      }))
+      .filter((f) => f.fused > 0)
+      .sort((a, b) => b.fused - a.fused);
+
+    const relevantFAQs = rankedFaqs.slice(0, 3);
+
+    /* ---------------- Document retrieval (hybrid) ---------------- */
+    type Passage = { titulo: string; texto: string; sem: number };
     let docPassages: Passage[] = [];
     let retrieval: "semantica" | "lexical" | "nenhuma" = "nenhuma";
 
@@ -92,61 +122,76 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     ).all<ChunkRow>();
     const chunks = chunkRes.results ?? [];
 
-    if (chunks.length > 0) {
-      try {
-        const qVec = await geminiEmbedQuery(env, message);
-        if (qVec.length > 0) {
-          const scored = chunks
-            .map((c) => {
-              let emb: number[] = [];
-              try {
-                emb = JSON.parse(c.embedding);
-              } catch {
-                emb = [];
-              }
-              return { titulo: c.titulo, texto: c.chunk, score: cosineSim(qVec, emb) };
-            })
-            .sort((a, b) => b.score - a.score);
+    if (chunks.length > 0 && qVec.length > 0) {
+      const keyOf = (c: ChunkRow) => `${c.documento_id}:${c.seq}`;
+      const semList = chunks.map((c) => ({
+        id: keyOf(c),
+        score: cosineSim(qVec, parseEmbedding(c.embedding)),
+      }));
+      const lexList = chunks.map((c) => ({
+        id: keyOf(c),
+        score: lexScore([
+          [c.titulo, 2],
+          [c.chunk, 1],
+        ]),
+      }));
+      const semById = new Map(semList.map((x) => [x.id, x.score]));
+      const fused = rrfFuse(lexList, semList);
 
-          // Keep the strongest passages above a relevance floor (max 5).
-          docPassages = scored.filter((p) => p.score >= 0.55).slice(0, 5);
-          if (docPassages.length === 0 && scored.length > 0 && scored[0].score >= 0.4) {
-            docPassages = scored.slice(0, 2);
-          }
-          retrieval = "semantica";
-        }
-      } catch {
-        retrieval = "nenhuma";
+      const ranked = chunks
+        .map((c) => ({
+          titulo: c.titulo,
+          texto: c.chunk,
+          sem: semById.get(keyOf(c)) ?? 0,
+          fused: fused.get(keyOf(c)) ?? 0,
+        }))
+        .filter((c) => c.fused > 0)
+        .sort((a, b) => b.fused - a.fused);
+
+      // Keep passages that clear the relevance floor; otherwise take the best two.
+      docPassages = ranked.filter((p) => p.sem >= DOC_FLOOR).slice(0, 5);
+      if (docPassages.length === 0 && ranked.length > 0 && ranked[0].sem >= 0.4) {
+        docPassages = ranked.slice(0, 2);
+      }
+      if (docPassages.length > 0) retrieval = "semantica";
+    }
+
+    // Fallback: old lexical excerpt search when there is no usable vector index.
+    if (docPassages.length === 0) {
+      const docRes = await env.DB.prepare("SELECT id, titulo, conteudo FROM documentos").all<Doc>();
+      const scored = (docRes.results ?? [])
+        .map((doc) => ({
+          titulo: doc.titulo,
+          texto: extractExcerpt(doc.conteudo, allTerms, 800),
+          sem: 0,
+          lex: lexScore([
+            [doc.titulo, 2],
+            [doc.conteudo, 1],
+          ]),
+        }))
+        .filter((d) => d.lex >= 1)
+        .sort((a, b) => b.lex - a.lex)
+        .slice(0, 2);
+      if (scored.length > 0) {
+        docPassages = scored;
+        retrieval = "lexical";
       }
     }
 
-    // Fallback to the old lexical excerpt search if semantic yielded nothing.
-    if (docPassages.length === 0) {
-      const docRes = await env.DB.prepare("SELECT id, titulo, conteudo FROM documentos").all<Doc>();
-      const documents = docRes.results ?? [];
-      docPassages = documents
-        .map((doc) => {
-          const t = normalizeText(doc.titulo);
-          const c = normalizeText(doc.conteudo);
-          let score = 0;
-          for (const term of allTerms) {
-            if (t.includes(term)) score += 2;
-            if (c.includes(term)) score += 1;
-          }
-          return { titulo: doc.titulo, texto: extractExcerpt(doc.conteudo, allTerms, 800), score };
-        })
-        .filter((d) => d.score >= 1)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 2);
-      if (docPassages.length > 0) retrieval = "lexical";
-    }
-
-    // --- Build context ---
+    /* ---------------- Build context ---------------- */
     let contextText = "";
-    if (relevantFAQs.length > 0) {
+    if (exactFaq) {
       contextText +=
-        "PERGUNTAS FREQUENTES:\n" +
-        relevantFAQs
+        "RESPOSTA OFICIAL PARA ESTA PERGUNTA (usa-a como base):\n" +
+        `Pergunta: ${exactFaq.pergunta}\nResposta: ${exactFaq.resposta}` +
+        (exactFaq.email ? `\nEmail: ${exactFaq.email}` : "") +
+        "\n\n";
+    }
+    const otherFaqs = relevantFAQs.filter((f) => f.id !== exactFaq?.id);
+    if (otherFaqs.length > 0) {
+      contextText +=
+        "PERGUNTAS FREQUENTES RELACIONADAS:\n" +
+        otherFaqs
           .map(
             (e) =>
               `Pergunta: ${e.pergunta}\nResposta: ${e.resposta}${e.email ? `\nEmail: ${e.email}` : ""}`
@@ -181,15 +226,26 @@ ${contextText ? `INFORMAÇÃO RELEVANTE:\n${contextText}` : "Não foi encontrada
     }
     if (!generatedResponse) generatedResponse = "Desculpe, não consegui processar a sua pergunta.";
 
-    const bestMatch = relevantFAQs[0];
+    /* ---------------- Decide whether to attach an email template ----------------
+       Only attach when we are confident the FAQ really matches the question.
+       Previously the top lexical hit was always attached, which produced
+       unrelated templates (e.g. a room-booking template for an exam question). */
+    let bestMatch: (typeof rankedFaqs)[number] | FAQ | null = null;
+    if (exactFaq) {
+      bestMatch = exactFaq;
+    } else {
+      const top = rankedFaqs[0];
+      if (top && (top.sem >= FAQ_CONFIDENCE || (qVec.length === 0 && top.lex >= 4))) {
+        bestMatch = top;
+      }
+    }
 
-    // Distinct source documents among the passages used.
     const seen = new Set<string>();
     const sources: { pergunta: string; score: number; type: string }[] = [];
     for (const p of docPassages) {
       if (seen.has(p.titulo)) continue;
       seen.add(p.titulo);
-      sources.push({ pergunta: p.titulo, score: Math.round(p.score * 100) / 100, type: "documento" });
+      sources.push({ pergunta: p.titulo, score: Math.round(p.sem * 100) / 100, type: "documento" });
     }
 
     return json({

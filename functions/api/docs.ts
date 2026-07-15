@@ -1,4 +1,4 @@
-import { Env, json, preflight } from "../_shared";
+import { Env, json, preflight, requireAdmin } from "../_shared";
 
 interface DocRow {
   id: string;
@@ -10,7 +10,10 @@ interface DocRow {
 }
 
 // GET /api/docs -> { documents: DocRow[] }
-export const onRequestGet: PagesFunction<Env> = async ({ env }) => {
+export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+
   try {
     const res = await env.DB.prepare(
       `SELECT d.id, d.titulo, d.tipo_ficheiro, d.created_at,

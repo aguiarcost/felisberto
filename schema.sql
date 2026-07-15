@@ -32,3 +32,10 @@ CREATE TABLE IF NOT EXISTS documento_chunks (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON documento_chunks(documento_id);
+
+-- Pesquisa híbrida: embeddings das perguntas frequentes.
+CREATE TABLE IF NOT EXISTS faq_embeddings (
+  faq_id TEXT PRIMARY KEY,
+  embedding TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

@@ -1,4 +1,4 @@
-import { Env, json, preflight } from "../_shared";
+import { Env, json, preflight, requireAdmin, indexFaq } from "../_shared";
 
 interface FAQInput {
   pergunta: string;
@@ -7,8 +7,11 @@ interface FAQInput {
   modelo_email?: string | null;
 }
 
-// POST /api/admin  { action, id?, data? }
+// POST /api/admin  { action, id?, data? }   [requires admin token]
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+
   try {
     const { action, id, data } = (await request.json()) as {
       action: string;
@@ -23,7 +26,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           "INSERT INTO base_conhecimento (pergunta, resposta, email, modelo_email) VALUES (?, ?, ?, ?) RETURNING *"
         )
           .bind(d.pergunta, d.resposta, d.email ?? null, d.modelo_email ?? null)
-          .first();
+          .first<{ id: string; pergunta: string; resposta: string }>();
+
+        // Keep the semantic index in sync; never fail the write because of it.
+        try {
+          if (row) await indexFaq(env, row);
+        } catch (e) {
+          return json({ success: true, data: row, indexWarning: String(e) });
+        }
         return json({ success: true, data: row });
       }
 
@@ -34,12 +44,19 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           "UPDATE base_conhecimento SET pergunta = ?, resposta = ?, email = ?, modelo_email = ? WHERE id = ? RETURNING *"
         )
           .bind(d.pergunta, d.resposta, d.email ?? null, d.modelo_email ?? null, id)
-          .first();
+          .first<{ id: string; pergunta: string; resposta: string }>();
+
+        try {
+          if (row) await indexFaq(env, row);
+        } catch (e) {
+          return json({ success: true, data: row, indexWarning: String(e) });
+        }
         return json({ success: true, data: row });
       }
 
       case "delete": {
         if (!id) return json({ error: "id em falta" }, 400);
+        await env.DB.prepare("DELETE FROM faq_embeddings WHERE faq_id = ?").bind(id).run();
         await env.DB.prepare("DELETE FROM base_conhecimento WHERE id = ?").bind(id).run();
         return json({ success: true });
       }
@@ -63,7 +80,12 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
           stmt.bind(it.pergunta, it.resposta, it.email ?? null, it.modelo_email ?? null)
         );
         await env.DB.batch(batch);
-        return json({ success: true, data: { imported: items.length } });
+        // Imported rows are not embedded here (could be many); ask for a reindex.
+        return json({
+          success: true,
+          data: { imported: items.length },
+          needsReindex: true,
+        });
       }
 
       default:

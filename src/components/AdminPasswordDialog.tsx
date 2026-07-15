@@ -11,6 +11,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { adminLogin } from '@/lib/api';
 
 interface AdminPasswordDialogProps {
   open: boolean;
@@ -18,26 +19,26 @@ interface AdminPasswordDialogProps {
   onCancel: () => void;
 }
 
-const ADMIN_PASSWORD = 'decivil2024';
-
 export function AdminPasswordDialog({ open, onAuthenticated, onCancel }: AdminPasswordDialogProps) {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // The password is verified on the server (/api/admin-login), which returns a
+  // signed session token. Nothing secret lives in this bundle.
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-
-    setTimeout(() => {
-      if (password === ADMIN_PASSWORD) {
-        toast.success('Acesso autorizado');
-        onAuthenticated();
-      } else {
-        toast.error('Password incorreta');
-      }
-      setIsLoading(false);
+    try {
+      await adminLogin(password);
+      toast.success('Acesso autorizado');
       setPassword('');
-    }, 300);
+      onAuthenticated();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Password incorreta');
+      setPassword('');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -73,7 +74,7 @@ export function AdminPasswordDialog({ open, onAuthenticated, onCancel }: AdminPa
             <Button type="button" variant="outline" className="flex-1" onClick={onCancel}>
               Cancelar
             </Button>
-            <Button type="submit" className="flex-1" disabled={isLoading}>
+            <Button type="submit" className="flex-1" disabled={isLoading || !password}>
               {isLoading ? 'A verificar...' : 'Entrar'}
             </Button>
           </div>

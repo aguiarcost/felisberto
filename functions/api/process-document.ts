@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { Env, json, preflight, geminiExtractPdf, indexDocument } from "../_shared";
+import { Env, json, preflight, geminiExtractPdf, indexDocument, requireAdmin } from "../_shared";
 
 const DOCX_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -36,6 +36,9 @@ async function extractDocx(bytes: Uint8Array): Promise<string> {
 
 // POST /api/process-document  { fileName, fileType, fileContent(base64) }
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+
   try {
     const { fileName, fileType, fileContent } = (await request.json()) as {
       fileName?: string;

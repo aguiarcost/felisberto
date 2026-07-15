@@ -1,4 +1,4 @@
-import { Env, json, preflight, indexDocument } from "../_shared";
+import { Env, json, preflight, requireAdmin, indexDocument, indexAllFaqs } from "../_shared";
 
 interface Doc {
   id: string;
@@ -6,8 +6,12 @@ interface Doc {
   conteudo: string;
 }
 
-// POST /api/reindex -> rebuilds semantic index for every document.
-export const onRequestPost: PagesFunction<Env> = async ({ env }) => {
+// POST /api/reindex -> rebuilds the semantic index for FAQs and documents.
+// [requires admin token]
+export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+
   try {
     const docRes = await env.DB.prepare(
       "SELECT id, titulo, conteudo FROM documentos"
@@ -31,10 +35,20 @@ export const onRequestPost: PagesFunction<Env> = async ({ env }) => {
       }
     }
 
+    let faqs = 0;
+    let faqError: string | undefined;
+    try {
+      faqs = await indexAllFaqs(env);
+    } catch (e) {
+      faqError = e instanceof Error ? e.message : "erro";
+    }
+
     return json({
       success: true,
       documents: documents.length,
       totalChunks,
+      faqs,
+      faqError,
       results,
     });
   } catch (e) {

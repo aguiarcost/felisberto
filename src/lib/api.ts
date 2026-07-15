@@ -1,24 +1,79 @@
 // Central client for the Felisberto backend (Cloudflare Pages Functions + D1).
-// Replaces the previous Supabase client/edge-function calls.
 import { BaseConhecimento } from '@/types/chat';
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error((data as { error?: string })?.error || `Erro ${res.status}`);
+/* ---------------- Admin session token ---------------- */
+// The token is issued by the server after validating the password.
+// It lives in sessionStorage so a page refresh keeps the session,
+// and disappears when the tab closes. The password itself is never stored.
+const TOKEN_KEY = 'felisberto_admin_token';
+
+export function getAdminToken(): string | null {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
   }
+}
+
+export function setAdminToken(token: string | null) {
+  try {
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable: session simply won't persist across reloads */
+  }
+}
+
+/** Thrown when the server rejects the admin token (expired or invalid). */
+export class UnauthorizedError extends Error {}
+
+async function postJson<T>(path: string, body: unknown, auth = false): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (auth) {
+    const token = getAdminToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    setAdminToken(null);
+    throw new UnauthorizedError((data as { error?: string })?.error || 'Sessão expirada');
+  }
+  if (!res.ok) throw new Error((data as { error?: string })?.error || `Erro ${res.status}`);
   return data as T;
 }
 
-export async function getFaqs(): Promise<{ faqs: BaseConhecimento[]; docsCount: number }> {
-  const res = await fetch('/api/faqs');
-  if (!res.ok) throw new Error('Erro ao carregar dados');
-  return res.json();
+async function getJson<T>(path: string, auth = false): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (auth) {
+    const token = getAdminToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  const res = await fetch(path, { headers });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    setAdminToken(null);
+    throw new UnauthorizedError((data as { error?: string })?.error || 'Sessão expirada');
+  }
+  if (!res.ok) throw new Error((data as { error?: string })?.error || `Erro ${res.status}`);
+  return data as T;
+}
+
+/* ---------------- Auth ---------------- */
+
+export async function adminLogin(password: string): Promise<void> {
+  const { token } = await postJson<{ token: string }>('/api/admin-login', { password });
+  setAdminToken(token);
+}
+
+export function adminLogout() {
+  setAdminToken(null);
+}
+
+/* ---------------- Public ---------------- */
+
+export function getFaqs(): Promise<{ faqs: BaseConhecimento[]; docsCount: number }> {
+  return getJson('/api/faqs');
 }
 
 export interface ChatSource {
@@ -31,11 +86,14 @@ export interface ChatResult {
   email: string | null;
   modelo_email: string | null;
   sources: ChatSource[];
+  retrieval?: string;
 }
 
 export function sendChat(message: string): Promise<ChatResult> {
   return postJson<ChatResult>('/api/chat', { message });
 }
+
+/* ---------------- Admin (token required) ---------------- */
 
 export interface FAQData {
   pergunta: string;
@@ -45,10 +103,10 @@ export interface FAQData {
 }
 
 export function adminAction(
-  action: 'create' | 'update' | 'delete' | 'import',
+  action: 'create' | 'update' | 'delete' | 'import' | 'delete-doc',
   payload: { id?: string; data?: FAQData | FAQData[] }
-): Promise<{ success: boolean; data?: unknown }> {
-  return postJson('/api/admin', { action, ...payload });
+): Promise<{ success: boolean; data?: unknown; needsReindex?: boolean }> {
+  return postJson('/api/admin', { action, ...payload }, true);
 }
 
 export function processDocument(
@@ -56,16 +114,18 @@ export function processDocument(
   fileType: string,
   fileContent: string
 ): Promise<{ success: boolean; message?: string; error?: string; chunks?: number }> {
-  return postJson('/api/process-document', { fileName, fileType, fileContent });
+  return postJson('/api/process-document', { fileName, fileType, fileContent }, true);
 }
 
 export function reindexDocuments(): Promise<{
   success: boolean;
   documents: number;
   totalChunks: number;
+  faqs: number;
+  faqError?: string;
   results: { titulo: string; chunks: number; error?: string }[];
 }> {
-  return postJson('/api/reindex', {});
+  return postJson('/api/reindex', {}, true);
 }
 
 export interface DocItem {
@@ -77,12 +137,10 @@ export interface DocItem {
   chunks: number;
 }
 
-export async function getDocuments(): Promise<{ documents: DocItem[] }> {
-  const res = await fetch('/api/docs');
-  if (!res.ok) throw new Error('Erro ao carregar documentos');
-  return res.json();
+export function getDocuments(): Promise<{ documents: DocItem[] }> {
+  return getJson('/api/docs', true);
 }
 
 export function deleteDocument(id: string): Promise<{ success: boolean }> {
-  return postJson('/api/admin', { action: 'delete-doc', id });
+  return postJson('/api/admin', { action: 'delete-doc', id }, true);
 }

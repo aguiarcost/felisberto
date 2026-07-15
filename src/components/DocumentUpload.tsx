@@ -35,7 +35,7 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
     try {
       const res = await reindexDocuments();
       toast.success(
-        `Índice reconstruído: ${res.documents} documento(s), ${res.totalChunks} excertos.`
+        `Índice reconstruído: ${res.faqs} perguntas, ${res.documents} documento(s), ${res.totalChunks} excertos.`
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erro ao reindexar');
