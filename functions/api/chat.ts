@@ -42,6 +42,9 @@ const DOC_FLOOR = 0.5;
 const HISTORY_TURNS = 6;
 /** How many candidate documents to open in stage 2. Bounds CPU per request. */
 const TOP_DOCS = 6;
+/** Lexical fallback caps: only used before a reindex, must stay cheap. */
+const FALLBACK_DOCS = 4;
+const FALLBACK_CHARS = 12000;
 
 // POST /api/chat  { message, history? } -> { resposta, email, modelo_email, sources, retrieval }
 export const onRequestPost: PagesFunction<Env> = async ({ request, env, waitUntil }) => {
@@ -196,28 +199,41 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, waitUnti
     }
 
     // Fallback: lexical excerpt search when there is no usable vector index
-    // (e.g. right after a dimension change, before a reindex). Bounded to a few
-    // documents so it can never blow the CPU budget either.
+    // (e.g. right after a dimension change, before a reindex).
+    // Strictly bounded: full-text scanning of large regulations costs several ms
+    // of CPU each, and the free plan only gives 10ms per request. We cap both
+    // the number of documents and how much of each one we look at.
     if (docPassages.length === 0 && docMetas.length > 0) {
       const fallbackIds = (
-        candidateIds.length ? candidateIds : docMetas.slice(0, 5).map((d) => d.id)
-      ).slice(0, 5);
+        candidateIds.length ? candidateIds : docMetas.map((d) => d.id)
+      ).slice(0, FALLBACK_DOCS);
       const ph = fallbackIds.map(() => "?").join(",");
       const docRes = await env.DB.prepare(
-        `SELECT id, titulo, conteudo FROM documentos WHERE id IN (${ph})`
+        `SELECT id, titulo, SUBSTR(conteudo, 1, ${FALLBACK_CHARS}) AS conteudo FROM documentos WHERE id IN (${ph})`
       )
         .bind(...fallbackIds)
         .all<Doc>();
       const scored = (docRes.results ?? [])
-        .map((doc) => ({
-          titulo: doc.titulo,
-          texto: extractExcerpt(doc.conteudo, allTerms, 800),
-          sem: 0,
-          lex: lexScore([[doc.titulo, 2], [doc.conteudo, 1]]),
-        }))
+        .map((doc) => {
+          // Normalise once and reuse: doing it per-call was the expensive part.
+          const nTitulo = normalizeText(doc.titulo);
+          const nTexto = normalizeText(doc.conteudo);
+          let lex = 0;
+          for (const t of allTerms) {
+            if (nTitulo.includes(t)) lex += 2;
+            if (nTexto.includes(t)) lex += 1;
+          }
+          return { titulo: doc.titulo, texto: "", sem: 0, lex, conteudo: doc.conteudo };
+        })
         .filter((d) => d.lex >= 1)
         .sort((a, b) => b.lex - a.lex)
-        .slice(0, 2);
+        .slice(0, 2)
+        // Only build excerpts for the two winners, never for every document.
+        .map((d) => ({
+          titulo: d.titulo,
+          texto: extractExcerpt(d.conteudo, allTerms, 800),
+          sem: 0,
+        }));
       if (scored.length > 0) {
         docPassages = scored;
         retrieval = "lexical";
