@@ -5,6 +5,12 @@ export interface Env {
   DB: D1Database;
   GEMINI_API_KEY: string;
   GEMINI_MODEL?: string;
+  /**
+   * Model used for PDF text extraction. Gemini quotas are PER MODEL, so keeping
+   * extraction on a different (cheaper, lighter) model means bulk uploads can
+   * never starve the chat of its quota.
+   */
+  GEMINI_EXTRACT_MODEL?: string;
   /** Admin password. Set as a SECRET in Cloudflare Pages. Never shipped to the browser. */
   ADMIN_PASSWORD?: string;
 }
@@ -546,8 +552,9 @@ function joinTextParts(data: GeminiResponse): string {
  * when it gives up (instead of blaming the document).
  */
 export async function geminiExtractPdf(env: Env, base64: string): Promise<string> {
-  const model = env.GEMINI_MODEL || "gemini-flash-latest";
+  const model = env.GEMINI_EXTRACT_MODEL || "gemini-3.1-flash-lite";
   let lastReason = "resposta vazia";
+  let rateLimited = false;
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
@@ -578,6 +585,7 @@ export async function geminiExtractPdf(env: Env, base64: string): Promise<string
     // Transient: back off and retry.
     if (res.status === 429 || res.status >= 500) {
       lastReason = `HTTP ${res.status}`;
+      rateLimited = rateLimited || res.status === 429;
       await sleep(2000 * (attempt + 1));
       continue;
     }
@@ -597,5 +605,11 @@ export async function geminiExtractPdf(env: Env, base64: string): Promise<string
     await sleep(1000);
   }
 
-  throw new Error(`A extração de texto falhou (${lastReason})`);
+  const err = new Error(
+    rateLimited
+      ? "Quota do Gemini esgotada para a extração de texto. Aguarde e tente novamente."
+      : `A extração de texto falhou (${lastReason})`
+  );
+  if (rateLimited) (err as unknown as { status: number }).status = 429;
+  throw err;
 }

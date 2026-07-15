@@ -120,6 +120,7 @@ export interface ProcessResult {
   error?: string;
   chunks?: number;
   duplicate?: boolean;
+  rateLimited?: boolean;
 }
 
 export function processDocument(

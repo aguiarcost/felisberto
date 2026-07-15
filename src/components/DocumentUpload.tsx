@@ -76,7 +76,7 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
 
   const processFile = async (
     file: File
-  ): Promise<{ success: boolean; error?: string; duplicate?: boolean }> => {
+  ): Promise<{ success: boolean; error?: string; duplicate?: boolean; rateLimited?: boolean }> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
       
@@ -92,6 +92,7 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
             resolve({
               success: false,
               duplicate: data?.duplicate,
+              rateLimited: data?.rateLimited,
               error: data?.error || 'Erro ao processar documento',
             });
           }
@@ -148,6 +149,21 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
       if (result.success) successCount++;
       else if (result.duplicate) duplicateCount++;
       else errorCount++;
+
+      // Quota exhausted: every remaining file would fail the same way, so stop
+      // and leave them pending instead of marking them all as errors.
+      if (result.rateLimited) {
+        const restantes = validFiles.length - (i + 1);
+        setUploadingFiles(prev =>
+          prev.map((f, idx) => (idx > i ? { ...f, status: 'pending' } : f))
+        );
+        toast.error(
+          restantes > 0
+            ? `Quota do Gemini esgotada. ${restantes} ficheiro(s) por carregar — tente mais tarde.`
+            : 'Quota do Gemini esgotada. Tente mais tarde.'
+        );
+        break;
+      }
     }
 
     // Show summary toast

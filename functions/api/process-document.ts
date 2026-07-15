@@ -169,6 +169,16 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       indexWarning,
     });
   } catch (e) {
+    // Surface rate limiting explicitly so the uploader can stop instead of
+    // burning through the remaining files against an exhausted quota.
+    const status = (e as { status?: number }).status;
+    if (status === 429) {
+      return json({
+        success: false,
+        rateLimited: true,
+        error: e instanceof Error ? e.message : "Quota esgotada",
+      });
+    }
     return json({ success: false, error: e instanceof Error ? e.message : "Unknown error" }, 500);
   }
 };
