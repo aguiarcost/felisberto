@@ -1,16 +1,16 @@
 import { useState, useCallback } from 'react';
 import { Message } from '@/types/chat';
-import { sendChat } from '@/lib/api';
+import { sendChat, type ChatTurn } from '@/lib/api';
+
+const WELCOME: Message = {
+  id: 'welcome',
+  role: 'assistant',
+  content: 'Olá! Sou o Felisberto, o assistente ACSUTA. Como posso ajudá-lo hoje?',
+  timestamp: new Date(),
+};
 
 export function useChat() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: 'Olá! Sou o Felisberto, o assistente ACSUTA. Como posso ajudá-lo hoje?',
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [isLoading, setIsLoading] = useState(false);
 
   const sendMessage = useCallback(async (content: string) => {
@@ -21,11 +21,17 @@ export function useChat() {
       timestamp: new Date(),
     };
 
+    // Conversation so far (excluding the greeting and the message being sent),
+    // so the assistant can understand follow-up questions.
+    const history: ChatTurn[] = messages
+      .filter((m) => m.id !== 'welcome')
+      .map((m) => ({ role: m.role, content: m.content }));
+
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
 
     try {
-      const data = await sendChat(content);
+      const data = await sendChat(content, history);
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -40,7 +46,7 @@ export function useChat() {
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
       console.error('Erro ao enviar mensagem:', error);
-      
+
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -52,17 +58,10 @@ export function useChat() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [messages]);
 
   const clearMessages = useCallback(() => {
-    setMessages([
-      {
-        id: 'welcome',
-        role: 'assistant',
-        content: 'Olá! Sou o Felisberto, o assistente ACSUTA. Como posso ajudá-lo hoje?',
-        timestamp: new Date(),
-      },
-    ]);
+    setMessages([{ ...WELCOME, timestamp: new Date() }]);
   }, []);
 
   return {

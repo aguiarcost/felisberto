@@ -39,3 +39,24 @@ CREATE TABLE IF NOT EXISTS faq_embeddings (
   embedding TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Registo de perguntas dos utilizadores (para identificar lacunas na base de conhecimento).
+-- Guarda apenas a pergunta e métricas de pesquisa. Sem IP nem identificação do utilizador.
+CREATE TABLE IF NOT EXISTS chat_logs (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  pergunta TEXT NOT NULL,
+  pergunta_pesquisa TEXT,
+  retrieval TEXT,
+  faq_score REAL,
+  doc_score REAL,
+  faq_match TEXT,
+  fontes TEXT,
+  respondido INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_logs_created ON chat_logs(created_at DESC);
+
+-- Colunas acrescentadas para a pesquisa em dois andares e estado de processamento:
+--   ALTER TABLE documentos ADD COLUMN centroid TEXT;   -- vetor médio do documento (base64 float32)
+--   ALTER TABLE documentos ADD COLUMN estado TEXT NOT NULL DEFAULT 'concluido';
+--   ALTER TABLE documentos ADD COLUMN erro TEXT;

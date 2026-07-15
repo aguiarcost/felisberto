@@ -7,6 +7,7 @@ import { CreateQuestionForm } from '@/components/CreateQuestionForm';
 import { EditQuestionForm } from '@/components/EditQuestionForm';
 import { DocumentUpload } from '@/components/DocumentUpload';
 import { DocumentList } from '@/components/DocumentList';
+import { ChatLogs } from '@/components/ChatLogs';
 import { ExportImport } from '@/components/ExportImport';
 import { getFaqs, getDocuments, getAdminToken, adminLogout, UnauthorizedError, type DocItem } from '@/lib/api';
 import { BaseConhecimento } from '@/types/chat';
@@ -113,6 +114,10 @@ const Admin = () => {
 
         <div className="mt-6">
           <DocumentList documents={documents} isLoading={isLoading} onChanged={fetchData} />
+        </div>
+
+        <div className="mt-6">
+          <ChatLogs />
         </div>
 
         {/* Stats */}

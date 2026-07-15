@@ -70,7 +70,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         {
           success: false,
           error:
-            "Não foi possível extrair texto do documento. Pode ser digitalizado/imagem ou estar protegido.",
+            "O documento não produziu texto. Se for um PDF digitalizado (imagem) ou protegido, não é possível extrair.",
         },
         400
       );

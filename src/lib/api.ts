@@ -89,8 +89,13 @@ export interface ChatResult {
   retrieval?: string;
 }
 
-export function sendChat(message: string): Promise<ChatResult> {
-  return postJson<ChatResult>('/api/chat', { message });
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export function sendChat(message: string, history: ChatTurn[] = []): Promise<ChatResult> {
+  return postJson<ChatResult>('/api/chat', { message, history });
 }
 
 /* ---------------- Admin (token required) ---------------- */
@@ -143,4 +148,33 @@ export function getDocuments(): Promise<{ documents: DocItem[] }> {
 
 export function deleteDocument(id: string): Promise<{ success: boolean }> {
   return postJson('/api/admin', { action: 'delete-doc', id }, true);
+}
+
+/* ---------------- Logs (token required) ---------------- */
+
+export interface LogItem {
+  id: string;
+  pergunta: string;
+  pergunta_pesquisa: string | null;
+  retrieval: string | null;
+  faq_score: number | null;
+  doc_score: number | null;
+  faq_match: string | null;
+  fontes: string | null;
+  respondido: number;
+  created_at: string;
+}
+
+export interface LogGap {
+  pergunta: string;
+  vezes: number;
+  ultima: string;
+}
+
+export function getLogs(limit = 100): Promise<{
+  logs: LogItem[];
+  stats: { total: number; sem_fonte: number; ultimos_7d: number };
+  gaps: LogGap[];
+}> {
+  return getJson(`/api/logs?limit=${limit}`, true);
 }

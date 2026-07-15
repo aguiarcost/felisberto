@@ -192,11 +192,12 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const EMBED_MODEL = "models/gemini-embedding-001";
 
 /**
- * Vector size. 768 keeps quality while using ~4x less storage than the 3072
- * default, which matters because every chat request loads all vectors.
- * Changing this REQUIRES a full reindex (old vectors are ignored, see cosineSim).
+ * Vector size. 512 balances quality against the Workers free-plan CPU budget
+ * (10ms/request). Vectors are stored packed as base64 float32 (~2.7KB each)
+ * instead of JSON (~10KB), which makes decoding an order of magnitude cheaper.
+ * Changing this REQUIRES a full reindex (old vectors are ignored, see unpackVector).
  */
-export const EMBED_DIM = 768;
+export const EMBED_DIM = 512;
 
 // Text chat completion via the Gemini API.
 export async function geminiChat(
@@ -224,10 +225,81 @@ export async function geminiChat(
     throw err;
   }
 
-  const data = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  return joinTextParts((await res.json()) as GeminiResponse);
+}
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** Multi-turn chat completion: the model sees the conversation so far. */
+export async function geminiChatHistory(
+  env: Env,
+  systemPrompt: string,
+  history: ChatTurn[],
+  userMessage: string
+): Promise<string> {
+  const model = env.GEMINI_MODEL || "gemini-flash-latest";
+  const contents = [
+    ...history.map((t) => ({
+      role: t.role === "assistant" ? "model" : "user",
+      parts: [{ text: t.content }],
+    })),
+    { role: "user", parts: [{ text: userMessage }] },
+  ];
+
+  const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents,
+    }),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    const err = new Error(`Gemini ${res.status}: ${txt}`);
+    (err as unknown as { status: number }).status = res.status;
+    throw err;
+  }
+
+  return joinTextParts((await res.json()) as GeminiResponse);
+}
+
+/**
+ * Turn a follow-up ("e para o segundo semestre?") into a standalone question,
+ * so that retrieval has something searchable. Falls back to the raw message.
+ */
+export async function condenseQuestion(
+  env: Env,
+  history: ChatTurn[],
+  message: string
+): Promise<string> {
+  if (history.length === 0) return message;
+  const convo = history
+    .map((t) => `${t.role === "user" ? "Utilizador" : "Assistente"}: ${t.content}`)
+    .join("\n");
+
+  const prompt = `Dada a conversa abaixo e a pergunta de seguimento, reescreve a pergunta de seguimento como uma pergunta autónoma e completa em português de Portugal, que faça sentido sozinha e mantenha todos os detalhes relevantes da conversa.
+
+Se a pergunta já for autónoma, devolve-a exatamente como está.
+
+Responde APENAS com a pergunta reescrita, sem aspas nem comentários.
+
+CONVERSA:
+${convo}`;
+
+  try {
+    const out = await geminiChat(env, prompt, `Pergunta de seguimento: ${message}`);
+    const clean = out.trim().replace(/^["']|["']$/g, "");
+    // Guard against the model rambling instead of rewriting.
+    if (!clean || clean.length > message.length + 260) return message;
+    return clean;
+  } catch {
+    return message;
+  }
 }
 
 // Embed a batch of texts to be stored (taskType RETRIEVAL_DOCUMENT).
@@ -272,7 +344,7 @@ export async function geminiEmbedQuery(env: Env, text: string): Promise<number[]
 }
 
 /** Cosine similarity. Returns 0 when dimensions differ (stale index). */
-export function cosineSim(a: number[], b: number[]): number {
+export function cosineSim(a: ArrayLike<number>, b: ArrayLike<number>): number {
   if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) {
@@ -284,13 +356,40 @@ export function cosineSim(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-export function parseEmbedding(raw: string): number[] {
-  try {
-    const v = JSON.parse(raw);
-    return Array.isArray(v) ? v : [];
-  } catch {
-    return [];
+/** Pack a vector as base64 float32. ~4x smaller than JSON and far cheaper to decode. */
+export function packVector(v: ArrayLike<number>): string {
+  const f32 = new Float32Array(v);
+  const bytes = new Uint8Array(f32.buffer);
+  let s = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    s += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }
+  return btoa(s);
+}
+
+/** Unpack a base64 float32 vector. Legacy JSON vectors return empty (ignored until reindex). */
+export function unpackVector(packed: string | null): Float32Array {
+  if (!packed || packed.charCodeAt(0) === 91 /* "[" = legacy JSON */) return new Float32Array(0);
+  try {
+    const bin = atob(packed);
+    if (bin.length % 4 !== 0) return new Float32Array(0);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Float32Array(bytes.buffer);
+  } catch {
+    return new Float32Array(0);
+  }
+}
+
+/** Mean of several vectors, used as a coarse "what is this document about" signal. */
+export function centroidOf(vectors: number[][]): number[] {
+  const dim = vectors[0]?.length ?? 0;
+  if (!dim) return [];
+  const out = new Array(dim).fill(0);
+  for (const v of vectors) for (let i = 0; i < dim; i++) out[i] += v[i];
+  for (let i = 0; i < dim; i++) out[i] /= vectors.length;
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -340,11 +439,20 @@ export async function indexDocument(
     "INSERT INTO documento_chunks (documento_id, titulo, seq, chunk, embedding) VALUES (?, ?, ?, ?, ?)"
   );
   const bound = chunks.map((c, i) =>
-    stmt.bind(doc.id, doc.titulo, i, c, JSON.stringify(embeddings[i] ?? []))
+    stmt.bind(doc.id, doc.titulo, i, c, packVector(embeddings[i] ?? []))
   );
   for (let i = 0; i < bound.length; i += 50) {
     await env.DB.batch(bound.slice(i, i + 50));
   }
+
+  // Document centroid: lets the chat pick candidate documents without loading
+  // every chunk vector, which is what keeps us inside the free CPU budget.
+  const valid = embeddings.filter((e) => e && e.length);
+  const centroid = valid.length ? centroidOf(valid) : [];
+  await env.DB.prepare("UPDATE documentos SET centroid = ? WHERE id = ?")
+    .bind(centroid.length ? packVector(centroid) : null, doc.id)
+    .run();
+
   return chunks.length;
 }
 
@@ -362,7 +470,7 @@ export async function indexFaq(
     "INSERT INTO faq_embeddings (faq_id, embedding, updated_at) VALUES (?, ?, datetime('now')) " +
       "ON CONFLICT(faq_id) DO UPDATE SET embedding = excluded.embedding, updated_at = datetime('now')"
   )
-    .bind(faq.id, JSON.stringify(vec ?? []))
+    .bind(faq.id, packVector(vec ?? []))
     .run();
 }
 
@@ -380,45 +488,90 @@ export async function indexAllFaqs(env: Env): Promise<number> {
     "INSERT INTO faq_embeddings (faq_id, embedding, updated_at) VALUES (?, ?, datetime('now')) " +
       "ON CONFLICT(faq_id) DO UPDATE SET embedding = excluded.embedding, updated_at = datetime('now')"
   );
-  const bound = faqs.map((f, i) => stmt.bind(f.id, JSON.stringify(vectors[i] ?? [])));
+  const bound = faqs.map((f, i) => stmt.bind(f.id, packVector(vectors[i] ?? [])));
   for (let i = 0; i < bound.length; i += 50) {
     await env.DB.batch(bound.slice(i, i + 50));
   }
   return faqs.length;
 }
 
-// Extract text from an inline PDF using Gemini's multimodal input.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface GeminiPart { text?: string; thought?: boolean }
+interface GeminiResponse {
+  candidates?: { content?: { parts?: GeminiPart[] }; finishReason?: string }[];
+  promptFeedback?: { blockReason?: string };
+}
+
+/**
+ * Join every text part of a response, skipping "thought" parts.
+ * Reading only parts[0] is wrong for thinking models: the first part can be a
+ * thought (with no text at all), which made extraction return "" at random.
+ */
+function joinTextParts(data: GeminiResponse): string {
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  return parts
+    .filter((p) => !p.thought && typeof p.text === "string")
+    .map((p) => p.text as string)
+    .join("");
+}
+
+/**
+ * Extract text from an inline PDF using Gemini's multimodal input.
+ * Retries on rate limits and on empty responses, and reports the real reason
+ * when it gives up (instead of blaming the document).
+ */
 export async function geminiExtractPdf(env: Env, base64: string): Promise<string> {
   const model = env.GEMINI_MODEL || "gemini-flash-latest";
-  const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": env.GEMINI_API_KEY,
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text:
-                "Extrai TODO o texto deste documento PDF. Retorna APENAS o texto extraído, sem comentários nem formatação adicional. Mantém a estrutura e os parágrafos do original.",
-            },
-            { inline_data: { mime_type: "application/pdf", data: base64 } },
-          ],
-        },
-      ],
-    }),
-  });
+  let lastReason = "resposta vazia";
 
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`Gemini PDF ${res.status}: ${txt}`);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": env.GEMINI_API_KEY,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text:
+                  "Extrai TODO o texto deste documento PDF. Retorna APENAS o texto extraído, sem comentários nem formatação adicional. Mantém a estrutura e os parágrafos do original.",
+              },
+              { inline_data: { mime_type: "application/pdf", data: base64 } },
+            ],
+          },
+        ],
+        // Long regulations need plenty of output room; without this the model
+        // silently truncates and can return nothing at all.
+        generationConfig: { maxOutputTokens: 65536, temperature: 0 },
+      }),
+    });
+
+    // Transient: back off and retry.
+    if (res.status === 429 || res.status >= 500) {
+      lastReason = `HTTP ${res.status}`;
+      await sleep(2000 * (attempt + 1));
+      continue;
+    }
+    if (!res.ok) {
+      throw new Error(`Gemini PDF ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }
+
+    const data = (await res.json()) as GeminiResponse;
+    const text = joinTextParts(data);
+    if (text.trim()) return text;
+
+    const finish = data.candidates?.[0]?.finishReason;
+    const blocked = data.promptFeedback?.blockReason;
+    lastReason = blocked ? `bloqueado (${blocked})` : finish ? `finishReason=${finish}` : "resposta vazia";
+    // MAX_TOKENS or a blocked prompt will not fix themselves on retry.
+    if (finish === "MAX_TOKENS" || blocked) break;
+    await sleep(1000);
   }
 
-  const data = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  throw new Error(`A extração de texto falhou (${lastReason})`);
 }
