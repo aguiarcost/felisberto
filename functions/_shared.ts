@@ -11,6 +11,8 @@ export interface Env {
    * never starve the chat of its quota.
    */
   GEMINI_EXTRACT_MODEL?: string;
+  /** Lighter model used when the primary is out of quota. Has its own quota pool. */
+  GEMINI_MODEL_FALLBACK?: string;
   /** Admin password. Set as a SECRET in Cloudflare Pages. Never shipped to the browser. */
   ADMIN_PASSWORD?: string;
 }
@@ -226,33 +228,17 @@ const EMBED_MODEL = "models/gemini-embedding-001";
  */
 export const EMBED_DIM = 512;
 
-// Text chat completion via the Gemini API.
+// Text chat completion. Falls back to the lighter model when out of quota.
 export async function geminiChat(
   env: Env,
   systemPrompt: string,
-  userMessage: string
+  userMessage: string,
+  models?: string[]
 ): Promise<string> {
-  const model = env.GEMINI_MODEL || "gemini-flash-latest";
-  const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": env.GEMINI_API_KEY,
-    },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: userMessage }] }],
-    }),
+  return generateWithChain(env, models ?? chatModelChain(env), {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents: [{ role: "user", parts: [{ text: userMessage }] }],
   });
-
-  if (!res.ok) {
-    const txt = await res.text();
-    const err = new Error(`Gemini ${res.status}: ${txt}`);
-    (err as unknown as { status: number }).status = res.status;
-    throw err;
-  }
-
-  return joinTextParts((await res.json()) as GeminiResponse);
 }
 
 export interface ChatTurn {
@@ -267,7 +253,6 @@ export async function geminiChatHistory(
   history: ChatTurn[],
   userMessage: string
 ): Promise<string> {
-  const model = env.GEMINI_MODEL || "gemini-flash-latest";
   const contents = [
     ...history.map((t) => ({
       role: t.role === "assistant" ? "model" : "user",
@@ -275,24 +260,10 @@ export async function geminiChatHistory(
     })),
     { role: "user", parts: [{ text: userMessage }] },
   ];
-
-  const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-    body: JSON.stringify({
-      system_instruction: { parts: [{ text: systemPrompt }] },
-      contents,
-    }),
+  return generateWithChain(env, chatModelChain(env), {
+    system_instruction: { parts: [{ text: systemPrompt }] },
+    contents,
   });
-
-  if (!res.ok) {
-    const txt = await res.text();
-    const err = new Error(`Gemini ${res.status}: ${txt}`);
-    (err as unknown as { status: number }).status = res.status;
-    throw err;
-  }
-
-  return joinTextParts((await res.json()) as GeminiResponse);
 }
 
 /**
@@ -319,7 +290,12 @@ CONVERSA:
 ${convo}`;
 
   try {
-    const out = await geminiChat(env, prompt, `Pergunta de seguimento: ${message}`);
+    // Rewriting a question is a mechanical task: run it on the light model so it
+    // never eats into the quota the actual answers need.
+    const out = await geminiChat(env, prompt, `Pergunta de seguimento: ${message}`, [
+      env.GEMINI_EXTRACT_MODEL || "gemini-3.1-flash-lite",
+      ...chatModelChain(env),
+    ]);
     const clean = out.trim().replace(/^["']|["']$/g, "");
     // Guard against the model rambling instead of rewriting.
     if (!clean || clean.length > message.length + 260) return message;
@@ -536,6 +512,92 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 export function isDailyQuota(body: string): boolean {
   return /PerDay|per day|daily limit|RequestsPerDay/i.test(body);
+}
+
+/* ------------------------------------------------------------------ */
+/* Model chain with quota-aware fallback                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Remembers which models are out of quota so we don't pay a failed request on
+ * every single call. Lives in the isolate's memory: it is a cache, not state —
+ * losing it just means we re-probe sooner, which is harmless.
+ * We deliberately re-probe (10 min) rather than compute the exact Pacific
+ * midnight reset, so the service heals itself whenever quota comes back.
+ */
+const exhaustedUntil = new Map<string, number>();
+
+function isExhausted(model: string): boolean {
+  const until = exhaustedUntil.get(model);
+  return until !== undefined && Date.now() < until;
+}
+
+function markExhausted(model: string, daily: boolean) {
+  exhaustedUntil.set(model, Date.now() + (daily ? 10 * 60_000 : 45_000));
+}
+
+/** Primary first, lighter model second. Quotas are per model, so this buys a second pool. */
+export function chatModelChain(env: Env): string[] {
+  return [
+    env.GEMINI_MODEL || "gemini-flash-latest",
+    env.GEMINI_MODEL_FALLBACK || "gemini-flash-lite-latest",
+  ].filter((m, i, a) => a.indexOf(m) === i);
+}
+
+/** Order to actually try: skip known-exhausted, but never end up with nothing. */
+function usableChain(models: string[]): string[] {
+  const fresh = models.filter((m) => !isExhausted(m));
+  return fresh.length ? fresh : models;
+}
+
+interface GenResult {
+  ok: boolean;
+  text?: string;
+  status?: number;
+  daily?: boolean;
+  body?: string;
+}
+
+async function callGenerate(env: Env, model: string, payload: unknown): Promise<GenResult> {
+  const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 429) {
+    const body = await res.text();
+    return { ok: false, status: 429, daily: isDailyQuota(body), body };
+  }
+  if (!res.ok) {
+    return { ok: false, status: res.status, body: (await res.text()).slice(0, 300) };
+  }
+  return { ok: true, text: joinTextParts((await res.json()) as GeminiResponse) };
+}
+
+/** Try each model in turn, falling back when one is out of quota. */
+async function generateWithChain(env: Env, models: string[], payload: unknown): Promise<string> {
+  let sawDaily = false;
+  let lastBody = "";
+  for (const model of usableChain(models)) {
+    const r = await callGenerate(env, model, payload);
+    if (r.ok) return r.text ?? "";
+    if (r.status === 429) {
+      markExhausted(model, !!r.daily);
+      sawDaily = sawDaily || !!r.daily;
+      lastBody = r.body ?? "";
+      continue; // try the next model in the chain
+    }
+    const err = new Error(`Gemini ${r.status}: ${r.body}`);
+    (err as unknown as { status: number }).status = r.status as number;
+    throw err;
+  }
+  const err = new Error(
+    sawDaily
+      ? `Quota diária esgotada em todos os modelos configurados. ${lastBody.slice(0, 120)}`
+      : "Limite de pedidos por minuto atingido em todos os modelos configurados."
+  );
+  (err as unknown as { status: number }).status = 429;
+  throw err;
 }
 
 interface GeminiPart { text?: string; thought?: boolean }
