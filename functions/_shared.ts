@@ -527,6 +527,17 @@ export async function indexAllFaqs(env: Env): Promise<number> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * A 429 from Gemini means one of two very different things:
+ *  - per-minute limit  -> clears in seconds, worth retrying
+ *  - per-day quota     -> only resets at midnight Pacific; retrying just burns
+ *                         more of a quota that is already gone
+ * Google spells this out in the error body, so we read it instead of guessing.
+ */
+export function isDailyQuota(body: string): boolean {
+  return /PerDay|per day|daily limit|RequestsPerDay/i.test(body);
+}
+
 interface GeminiPart { text?: string; thought?: boolean }
 interface GeminiResponse {
   candidates?: { content?: { parts?: GeminiPart[] }; finishReason?: string }[];
@@ -555,6 +566,7 @@ export async function geminiExtractPdf(env: Env, base64: string): Promise<string
   const model = env.GEMINI_EXTRACT_MODEL || "gemini-3.1-flash-lite";
   let lastReason = "resposta vazia";
   let rateLimited = false;
+  let daily = false;
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
@@ -582,10 +594,16 @@ export async function geminiExtractPdf(env: Env, base64: string): Promise<string
       }),
     });
 
-    // Transient: back off and retry.
+    // Transient: back off and retry. But a daily quota will not clear, so
+    // stop immediately instead of spending three more requests on it.
     if (res.status === 429 || res.status >= 500) {
+      const body = await res.text();
       lastReason = `HTTP ${res.status}`;
-      rateLimited = rateLimited || res.status === 429;
+      if (res.status === 429) {
+        rateLimited = true;
+        daily = isDailyQuota(body);
+        if (daily) break;
+      }
       await sleep(2000 * (attempt + 1));
       continue;
     }
@@ -606,9 +624,11 @@ export async function geminiExtractPdf(env: Env, base64: string): Promise<string
   }
 
   const err = new Error(
-    rateLimited
-      ? "Quota do Gemini esgotada para a extração de texto. Aguarde e tente novamente."
-      : `A extração de texto falhou (${lastReason})`
+    daily
+      ? "Quota DIÁRIA do Gemini esgotada para a extração. Só reinicia à meia-noite (Pacífico), ~08:00 em Lisboa."
+      : rateLimited
+        ? "Limite por minuto do Gemini atingido na extração. Aguarde um pouco e tente novamente."
+        : `A extração de texto falhou (${lastReason})`
   );
   if (rateLimited) (err as unknown as { status: number }).status = 429;
   throw err;

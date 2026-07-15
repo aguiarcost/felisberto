@@ -11,6 +11,7 @@ import {
   cosineSim,
   unpackVector,
   rrfFuse,
+  isDailyQuota,
   type ChatTurn,
 } from "../_shared";
 
@@ -282,8 +283,18 @@ ${contextText ? `INFORMAÇÃO RELEVANTE:\n${contextText}` : "Não foi encontrada
       generatedResponse = await geminiChatHistory(env, systemPrompt, history, message);
     } catch (e) {
       const status = (e as { status?: number }).status;
-      if (status === 429)
-        return json({ error: "Limite de pedidos excedido. Por favor, aguarde um momento." }, 429);
+      if (status === 429) {
+        // Tell the two kinds of 429 apart: waiting 30s vs waiting for the daily reset.
+        const msg = e instanceof Error ? e.message : "";
+        return json(
+          {
+            error: isDailyQuota(msg)
+              ? "Quota diária do Gemini esgotada. O serviço volta após a meia-noite (Pacífico), cerca das 08:00 em Lisboa."
+              : "Muitos pedidos em pouco tempo. Aguarde alguns segundos e tente novamente.",
+          },
+          429
+        );
+      }
       throw e;
     }
     if (!generatedResponse) generatedResponse = "Desculpe, não consegui processar a sua pergunta.";
