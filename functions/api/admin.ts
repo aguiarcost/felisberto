@@ -44,6 +44,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
         return json({ success: true });
       }
 
+      case "delete-doc": {
+        if (!id) return json({ error: "id em falta" }, 400);
+        await env.DB.prepare("DELETE FROM documento_chunks WHERE documento_id = ?").bind(id).run();
+        await env.DB.prepare("DELETE FROM documentos WHERE id = ?").bind(id).run();
+        return json({ success: true });
+      }
+
       case "import": {
         const items = (data as FAQInput[]) ?? [];
         if (!Array.isArray(items) || items.length === 0) {

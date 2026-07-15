@@ -67,3 +67,22 @@ export function reindexDocuments(): Promise<{
 }> {
   return postJson('/api/reindex', {});
 }
+
+export interface DocItem {
+  id: string;
+  titulo: string;
+  tipo_ficheiro: string | null;
+  created_at: string;
+  tamanho: number;
+  chunks: number;
+}
+
+export async function getDocuments(): Promise<{ documents: DocItem[] }> {
+  const res = await fetch('/api/docs');
+  if (!res.ok) throw new Error('Erro ao carregar documentos');
+  return res.json();
+}
+
+export function deleteDocument(id: string): Promise<{ success: boolean }> {
+  return postJson('/api/admin', { action: 'delete-doc', id });
+}

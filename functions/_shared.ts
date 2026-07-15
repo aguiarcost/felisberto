@@ -51,13 +51,13 @@ export function extractExcerpt(text: string, terms: string[], maxLength = 800): 
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
-// Text chat completion via the Gemini API (free tier: gemini-2.5-flash).
+// Text chat completion via the Gemini API (free tier: gemini-flash-latest).
 export async function geminiChat(
   env: Env,
   systemPrompt: string,
   userMessage: string
 ): Promise<string> {
-  const model = env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = env.GEMINI_MODEL || "gemini-flash-latest";
   const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
     method: "POST",
     headers: {
@@ -197,7 +197,7 @@ export async function indexDocument(
 
 // Extract text from an inline PDF using Gemini's multimodal input.
 export async function geminiExtractPdf(env: Env, base64: string): Promise<string> {
-  const model = env.GEMINI_MODEL || "gemini-2.5-flash";
+  const model = env.GEMINI_MODEL || "gemini-flash-latest";
   const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
     method: "POST",
     headers: {

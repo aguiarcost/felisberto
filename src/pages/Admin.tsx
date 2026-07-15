@@ -6,8 +6,9 @@ import { AdminPasswordDialog } from '@/components/AdminPasswordDialog';
 import { CreateQuestionForm } from '@/components/CreateQuestionForm';
 import { EditQuestionForm } from '@/components/EditQuestionForm';
 import { DocumentUpload } from '@/components/DocumentUpload';
+import { DocumentList } from '@/components/DocumentList';
 import { ExportImport } from '@/components/ExportImport';
-import { getFaqs } from '@/lib/api';
+import { getFaqs, getDocuments, type DocItem } from '@/lib/api';
 import { BaseConhecimento } from '@/types/chat';
 import felisbertoAvatar from '@/assets/felisberto_avatar.png';
 
@@ -15,15 +16,20 @@ const Admin = () => {
   const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [faqs, setFaqs] = useState<BaseConhecimento[]>([]);
+  const [documents, setDocuments] = useState<DocItem[]>([]);
   const [docsCount, setDocsCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const { faqs, docsCount } = await getFaqs();
+      const [{ faqs, docsCount }, { documents }] = await Promise.all([
+        getFaqs(),
+        getDocuments(),
+      ]);
       setFaqs(faqs);
       setDocsCount(docsCount);
+      setDocuments(documents);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     } finally {
@@ -86,6 +92,10 @@ const Admin = () => {
           <EditQuestionForm faqs={faqs} onQuestionUpdated={fetchData} />
           <DocumentUpload onDocumentProcessed={fetchData} />
           <ExportImport faqs={faqs} onImportComplete={fetchData} />
+        </div>
+
+        <div className="mt-6">
+          <DocumentList documents={documents} isLoading={isLoading} onChanged={fetchData} />
         </div>
 
         {/* Stats */}
