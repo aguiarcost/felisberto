@@ -1,5 +1,14 @@
 import JSZip from "jszip";
-import { Env, json, preflight, geminiExtractPdf, indexDocument, requireAdmin } from "../_shared";
+import {
+  Env,
+  json,
+  preflight,
+  geminiExtractPdf,
+  indexDocument,
+  requireAdmin,
+  sha256,
+  textFingerprint,
+} from "../_shared";
 
 const DOCX_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -40,26 +49,45 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   if (denied) return denied;
 
   try {
-    const { fileName, fileType, fileContent } = (await request.json()) as {
+    const { fileName, fileType, fileContent, substituir } = (await request.json()) as {
       fileName?: string;
       fileType?: string;
       fileContent?: string;
+      substituir?: boolean;
     };
 
     if (!fileName || !fileContent) {
       return json({ success: false, error: "Missing fileName or fileContent" }, 400);
     }
 
+    // 1) Exact-file check first: costs nothing and avoids a wasted Gemini call.
+    const bytes = base64ToBytes(fileContent);
+    const hashFicheiro = await sha256(bytes);
+    if (!substituir) {
+      const dup = await env.DB.prepare(
+        "SELECT titulo FROM documentos WHERE hash_ficheiro = ?"
+      )
+        .bind(hashFicheiro)
+        .first<{ titulo: string }>();
+      if (dup) {
+        return json({
+          success: false,
+          duplicate: true,
+          error: `Já existe: "${dup.titulo}" (ficheiro idêntico).`,
+        });
+      }
+    }
+
     let extractedText = "";
     let tipoFicheiro = "txt";
 
     if (fileType === "text/plain") {
-      extractedText = new TextDecoder().decode(base64ToBytes(fileContent));
+      extractedText = new TextDecoder().decode(bytes);
     } else if (fileType === "application/pdf") {
       extractedText = await geminiExtractPdf(env, fileContent);
       tipoFicheiro = "pdf";
     } else if (fileType === DOCX_TYPE) {
-      extractedText = await extractDocx(base64ToBytes(fileContent));
+      extractedText = await extractDocx(bytes);
       tipoFicheiro = "docx";
     } else {
       return json({ success: false, error: "Unsupported file type" }, 400);
@@ -85,21 +113,41 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
       .trim()
       .substring(0, 300000);
 
+    // 2) Content check: catches the same document uploaded under another name
+    //    (e.g. "regulamento.pdf" and "regulamento (1).pdf").
+    const hashTexto = await sha256(textFingerprint(conteudo));
+    if (!substituir) {
+      const dupTexto = await env.DB.prepare(
+        "SELECT titulo FROM documentos WHERE hash_texto = ? AND titulo != ?"
+      )
+        .bind(hashTexto, titulo)
+        .first<{ titulo: string }>();
+      if (dupTexto) {
+        return json({
+          success: false,
+          duplicate: true,
+          error: `Conteúdo igual a "${dupTexto.titulo}".`,
+        });
+      }
+    }
+
     const existing = await env.DB.prepare("SELECT id FROM documentos WHERE titulo = ?")
       .bind(titulo)
       .first<{ id: string }>();
 
     let docId: string;
     if (existing) {
-      await env.DB.prepare("UPDATE documentos SET conteudo = ?, tipo_ficheiro = ? WHERE id = ?")
-        .bind(conteudo, tipoFicheiro, existing.id)
+      await env.DB.prepare(
+        "UPDATE documentos SET conteudo = ?, tipo_ficheiro = ?, hash_ficheiro = ?, hash_texto = ? WHERE id = ?"
+      )
+        .bind(conteudo, tipoFicheiro, hashFicheiro, hashTexto, existing.id)
         .run();
       docId = existing.id;
     } else {
       const row = await env.DB.prepare(
-        "INSERT INTO documentos (titulo, conteudo, tipo_ficheiro) VALUES (?, ?, ?) RETURNING id"
+        "INSERT INTO documentos (titulo, conteudo, tipo_ficheiro, hash_ficheiro, hash_texto) VALUES (?, ?, ?, ?, ?) RETURNING id"
       )
-        .bind(titulo, conteudo, tipoFicheiro)
+        .bind(titulo, conteudo, tipoFicheiro, hashFicheiro, hashTexto)
         .first<{ id: string }>();
       docId = row!.id;
     }

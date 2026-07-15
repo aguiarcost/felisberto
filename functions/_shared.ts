@@ -27,6 +27,27 @@ export function preflight(): Response {
 }
 
 /* ------------------------------------------------------------------ */
+/* Hashing (duplicate detection)                                       */
+/* ------------------------------------------------------------------ */
+
+export async function sha256(data: Uint8Array | string): Promise<string> {
+  const buf = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  const digest = await crypto.subtle.digest("SHA-256", buf as unknown as BufferSource);
+  const out: string[] = [];
+  for (const b of new Uint8Array(digest)) out.push(b.toString(16).padStart(2, "0"));
+  return out.join("");
+}
+
+/**
+ * Content fingerprint: whitespace-insensitive, so the same document re-exported
+ * or re-saved still matches. Used to spot duplicates uploaded under a different
+ * file name.
+ */
+export function textFingerprint(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/* ------------------------------------------------------------------ */
 /* Admin authentication (HMAC-signed token, verified server-side)      */
 /* ------------------------------------------------------------------ */
 
@@ -447,10 +468,13 @@ export async function indexDocument(
 
   // Document centroid: lets the chat pick candidate documents without loading
   // every chunk vector, which is what keeps us inside the free CPU budget.
+  // Also backfills the text fingerprint so older documents take part in
+  // duplicate detection.
   const valid = embeddings.filter((e) => e && e.length);
   const centroid = valid.length ? centroidOf(valid) : [];
-  await env.DB.prepare("UPDATE documentos SET centroid = ? WHERE id = ?")
-    .bind(centroid.length ? packVector(centroid) : null, doc.id)
+  const hashTexto = await sha256(textFingerprint(doc.conteudo));
+  await env.DB.prepare("UPDATE documentos SET centroid = ?, hash_texto = ? WHERE id = ?")
+    .bind(centroid.length ? packVector(centroid) : null, hashTexto, doc.id)
     .run();
 
   return chunks.length;

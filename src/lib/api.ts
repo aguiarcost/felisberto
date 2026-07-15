@@ -114,12 +114,21 @@ export function adminAction(
   return postJson('/api/admin', { action, ...payload }, true);
 }
 
+export interface ProcessResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+  chunks?: number;
+  duplicate?: boolean;
+}
+
 export function processDocument(
   fileName: string,
   fileType: string,
-  fileContent: string
-): Promise<{ success: boolean; message?: string; error?: string; chunks?: number }> {
-  return postJson('/api/process-document', { fileName, fileType, fileContent }, true);
+  fileContent: string,
+  substituir = false
+): Promise<ProcessResult> {
+  return postJson('/api/process-document', { fileName, fileType, fileContent, substituir }, true);
 }
 
 export interface ReindexResult {

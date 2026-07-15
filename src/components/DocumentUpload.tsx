@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Upload, FileText, Loader2, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
+import { Upload, FileText, Loader2, CheckCircle, XCircle, RefreshCw, CopyCheck } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -12,7 +12,7 @@ interface DocumentUploadProps {
 
 interface UploadingFile {
   name: string;
-  status: 'pending' | 'uploading' | 'success' | 'error';
+  status: 'pending' | 'uploading' | 'success' | 'error' | 'duplicate';
   error?: string;
 }
 
@@ -74,7 +74,9 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
     }
   };
 
-  const processFile = async (file: File): Promise<{ success: boolean; error?: string }> => {
+  const processFile = async (
+    file: File
+  ): Promise<{ success: boolean; error?: string; duplicate?: boolean }> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
       
@@ -87,7 +89,11 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
           if (data?.success) {
             resolve({ success: true });
           } else {
-            resolve({ success: false, error: data?.error || 'Erro ao processar documento' });
+            resolve({
+              success: false,
+              duplicate: data?.duplicate,
+              error: data?.error || 'Erro ao processar documento',
+            });
           }
         } catch (err) {
           resolve({ success: false, error: err instanceof Error ? err.message : 'Erro desconhecido' });
@@ -122,6 +128,7 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
 
     let successCount = 0;
     let errorCount = 0;
+    let duplicateCount = 0;
 
     // Process files sequentially to avoid overwhelming the server
     for (let i = 0; i < validFiles.length; i++) {
@@ -133,25 +140,23 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
 
       const result = await processFile(file);
 
-      setUploadingFiles(prev => 
-        prev.map((f, idx) => 
-          idx === i 
-            ? { ...f, status: result.success ? 'success' : 'error', error: result.error } 
-            : f
-        )
+      const status = result.success ? 'success' : result.duplicate ? 'duplicate' : 'error';
+      setUploadingFiles(prev =>
+        prev.map((f, idx) => (idx === i ? { ...f, status, error: result.error } : f))
       );
 
-      if (result.success) {
-        successCount++;
-      } else {
-        errorCount++;
-      }
+      if (result.success) successCount++;
+      else if (result.duplicate) duplicateCount++;
+      else errorCount++;
     }
 
     // Show summary toast
     if (successCount > 0) {
       toast.success(`${successCount} documento(s) processado(s) com sucesso!`);
       onDocumentProcessed();
+    }
+    if (duplicateCount > 0) {
+      toast.info(`${duplicateCount} documento(s) já existiam e foram ignorados.`);
     }
     if (errorCount > 0) {
       toast.error(`${errorCount} documento(s) falharam.`);
@@ -236,10 +241,21 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
                   {file.status === 'success' && (
                     <CheckCircle className="h-4 w-4 text-green-500" />
                   )}
+                  {file.status === 'duplicate' && (
+                    <CopyCheck className="h-4 w-4 text-blue-500" />
+                  )}
                   {file.status === 'error' && (
                     <XCircle className="h-4 w-4 text-destructive" />
                   )}
-                  <span className={file.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}>
+                  <span
+                    className={
+                      file.status === 'error'
+                        ? 'text-destructive'
+                        : file.status === 'duplicate'
+                          ? 'text-blue-600'
+                          : 'text-muted-foreground'
+                    }
+                  >
                     {file.name}
                     {file.error && <span className="ml-2 text-xs">({file.error})</span>}
                   </span>
@@ -250,7 +266,8 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
 
           <p className="text-xs text-muted-foreground">
             O conteúdo dos documentos é extraído e indexado para pesquisa semântica.
-            Documentos novos são indexados automaticamente ao carregar.
+            Documentos novos são indexados automaticamente ao carregar. Ficheiros já
+            existentes (mesmo com outro nome) são detetados e ignorados.
           </p>
 
           <div className="flex items-center justify-between gap-2 border-t pt-4">

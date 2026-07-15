@@ -60,3 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_logs_created ON chat_logs(created_at DESC);
 --   ALTER TABLE documentos ADD COLUMN centroid TEXT;   -- vetor médio do documento (base64 float32)
 --   ALTER TABLE documentos ADD COLUMN estado TEXT NOT NULL DEFAULT 'concluido';
 --   ALTER TABLE documentos ADD COLUMN erro TEXT;
+--   ALTER TABLE documentos ADD COLUMN hash_ficheiro TEXT;  -- SHA-256 do ficheiro (deteta duplicados)
+--   ALTER TABLE documentos ADD COLUMN hash_texto TEXT;     -- SHA-256 do texto normalizado
+--   CREATE INDEX idx_docs_hash_ficheiro ON documentos(hash_ficheiro);
+--   CREATE INDEX idx_docs_hash_texto ON documentos(hash_texto);
