@@ -122,15 +122,19 @@ export function processDocument(
   return postJson('/api/process-document', { fileName, fileType, fileContent }, true);
 }
 
-export function reindexDocuments(): Promise<{
+export interface ReindexResult {
   success: boolean;
   documents: number;
   totalChunks: number;
   faqs: number;
   faqError?: string;
+  remaining: number;
   results: { titulo: string; chunks: number; error?: string }[];
-}> {
-  return postJson('/api/reindex', {}, true);
+}
+
+/** Processes one batch. Pass force=true to start a full rebuild. */
+export function reindexDocuments(force = false): Promise<ReindexResult> {
+  return postJson('/api/reindex', { force }, true);
 }
 
 export interface DocItem {

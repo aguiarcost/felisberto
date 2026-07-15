@@ -28,19 +28,49 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
+  const [reindexProgress, setReindexProgress] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Reindexing runs in batches: the free plan caps subrequests per invocation,
+  // so we keep calling until the backend reports nothing left to do.
   const handleReindex = async () => {
     setIsReindexing(true);
+    setReindexProgress('a iniciar...');
     try {
-      const res = await reindexDocuments();
-      toast.success(
-        `Índice reconstruído: ${res.faqs} perguntas, ${res.documents} documento(s), ${res.totalChunks} excertos.`
-      );
+      let force = true;
+      let docs = 0;
+      let chunks = 0;
+      let faqs = 0;
+      const errors: string[] = [];
+
+      for (let pass = 0; pass < 60; pass++) {
+        const res = await reindexDocuments(force);
+        force = false;
+        docs += res.documents;
+        chunks += res.totalChunks;
+        faqs = faqs || res.faqs;
+        res.results.filter((r) => r.error).forEach((r) => errors.push(r.titulo));
+
+        if (res.remaining === 0) break;
+        setReindexProgress(`${docs} feitos, ${res.remaining} por indexar...`);
+        if (res.documents === 0) break; // nothing progressed: avoid a loop
+      }
+
+      if (errors.length) {
+        toast.warning(
+          `Índice reconstruído: ${faqs} perguntas, ${docs} documento(s), ${chunks} excertos. ${errors.length} falharam.`
+        );
+      } else {
+        toast.success(
+          `Índice reconstruído: ${faqs} perguntas, ${docs} documento(s), ${chunks} excertos.`
+        );
+      }
+      onDocumentProcessed?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erro ao reindexar');
     } finally {
       setIsReindexing(false);
+      setReindexProgress('');
     }
   };
 
@@ -226,7 +256,11 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
           <div className="flex items-center justify-between gap-2 border-t pt-4">
             <div className="text-xs text-muted-foreground">
               Reconstruir o índice semântico de todos os documentos (use após importar
-              dados ou se a pesquisa parecer desatualizada).
+              dados ou se a pesquisa parecer desatualizada). Corre por lotes; mantenha
+              esta página aberta até terminar.
+              {reindexProgress && (
+                <span className="mt-1 block font-medium text-foreground">{reindexProgress}</span>
+              )}
             </div>
             <Button
               type="button"
@@ -241,7 +275,7 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
               ) : (
                 <RefreshCw className="h-4 w-4 mr-2" />
               )}
-              Reindexar
+              {isReindexing ? 'A reindexar...' : 'Reindexar'}
             </Button>
           </div>
         </div>
