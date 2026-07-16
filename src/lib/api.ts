@@ -139,12 +139,13 @@ export interface ReindexResult {
   faqs: number;
   faqError?: string;
   remaining: number;
+  nothingPending?: boolean;
   rateLimited?: boolean;
   retryAfter?: number;
   results: { titulo: string; chunks: number; error?: string }[];
 }
 
-/** Processes one batch. Pass force=true to start a full rebuild. */
+/** Processes one batch. force=true restarts the whole queue from scratch. */
 export function reindexDocuments(force = false): Promise<ReindexResult> {
   return postJson('/api/reindex', { force }, true);
 }

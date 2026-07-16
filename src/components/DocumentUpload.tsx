@@ -37,7 +37,10 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
     setIsReindexing(true);
     setReindexProgress('a iniciar...');
     try {
-      let force = true;
+      // Continue the existing queue. Only rebuild from scratch when there is
+      // genuinely nothing left to do — otherwise every click would discard the
+      // progress of the previous one.
+      let force = false;
       let docs = 0;
       let chunks = 0;
       let faqs = 0;
@@ -46,6 +49,15 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
       for (let pass = 0; pass < 120; pass++) {
         const res = await reindexDocuments(force);
         force = false;
+
+        if (res.nothingPending) {
+          if (pass === 0) {
+            setReindexProgress('tudo indexado — a reconstruir do início...');
+            force = true;
+            continue;
+          }
+          break;
+        }
         docs += res.documents;
         chunks += res.totalChunks;
         faqs = faqs || res.faqs;

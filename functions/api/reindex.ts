@@ -23,8 +23,27 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     const body = (await request.json().catch(() => ({}))) as { force?: boolean };
 
+    // force = start over from scratch. Without it we CONTINUE the existing
+    // queue: resetting on every click threw away all the progress made so far,
+    // which is why a paced reindex could never reach the end.
     if (body.force) {
       await env.DB.prepare("UPDATE documentos SET estado = 'pendente', erro = NULL").run();
+    } else {
+      const left = await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM documentos WHERE estado != 'concluido'"
+      ).first<{ n: number }>();
+      if ((left?.n ?? 0) === 0) {
+        // Nothing queued: let the caller decide whether to rebuild everything.
+        return json({
+          success: true,
+          documents: 0,
+          totalChunks: 0,
+          faqs: 0,
+          remaining: 0,
+          nothingPending: true,
+          results: [],
+        });
+      }
     }
 
     let faqs = 0;
