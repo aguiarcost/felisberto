@@ -602,29 +602,52 @@ async function callGenerate(env: Env, model: string, payload: unknown): Promise<
   return { ok: true, text: joinTextParts((await res.json()) as GeminiResponse) };
 }
 
-/** Try each model in turn, falling back when one is out of quota. */
+/**
+ * Try each model in turn. Falls over on two different failure modes:
+ *  - 429: out of quota  -> remember it and move to the next model
+ *  - 5xx: model overloaded on Google's side (temporary) -> next model, then one
+ *    short retry of the whole chain, since overload usually passes in seconds.
+ */
 async function generateWithChain(env: Env, models: string[], payload: unknown): Promise<string> {
   let sawDaily = false;
+  let sawOverload = false;
   let lastBody = "";
-  for (const model of usableChain(models)) {
-    const r = await callGenerate(env, model, payload);
-    if (r.ok) return r.text ?? "";
-    if (r.status === 429) {
-      markExhausted(model, !!r.daily);
-      sawDaily = sawDaily || !!r.daily;
-      lastBody = r.body ?? "";
-      continue; // try the next model in the chain
+
+  for (let round = 0; round < 2; round++) {
+    for (const model of usableChain(models)) {
+      const r = await callGenerate(env, model, payload);
+      if (r.ok) return r.text ?? "";
+
+      if (r.status === 429) {
+        markExhausted(model, !!r.daily);
+        sawDaily = sawDaily || !!r.daily;
+        lastBody = r.body ?? "";
+        continue;
+      }
+      if (r.status && r.status >= 500) {
+        // Not our fault and not quota: the model is busy. Try the next one.
+        sawOverload = true;
+        lastBody = r.body ?? "";
+        continue;
+      }
+
+      const err = new Error(`Gemini ${r.status}: ${r.body}`);
+      (err as unknown as { status: number }).status = r.status as number;
+      throw err;
     }
-    const err = new Error(`Gemini ${r.status}: ${r.body}`);
-    (err as unknown as { status: number }).status = r.status as number;
-    throw err;
+    // Every model was busy: wait a moment and give the chain one more go.
+    if (!sawOverload) break;
+    if (round === 0) await sleep(1200);
   }
+
   const err = new Error(
     sawDaily
       ? `Quota diária esgotada em todos os modelos configurados. ${lastBody.slice(0, 120)}`
-      : "Limite de pedidos por minuto atingido em todos os modelos configurados."
+      : sawOverload
+        ? "Os modelos do Gemini estão com muita procura neste momento."
+        : "Limite de pedidos por minuto atingido em todos os modelos configurados."
   );
-  (err as unknown as { status: number }).status = 429;
+  (err as unknown as { status: number }).status = sawOverload && !sawDaily ? 503 : 429;
   throw err;
 }
 

@@ -47,10 +47,15 @@ export function useChat() {
     } catch (error) {
       console.error('Erro ao enviar mensagem:', error);
 
+      // Show what actually went wrong (quota, overload, ...) instead of a
+      // generic message that tells the user nothing.
+      const detalhe = error instanceof Error ? error.message : '';
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'Desculpe, ocorreu um erro ao processar a sua pergunta. Por favor, tente novamente.',
+        content: detalhe
+          ? `Desculpe: ${detalhe}`
+          : 'Desculpe, ocorreu um erro ao processar a sua pergunta. Por favor, tente novamente.',
         timestamp: new Date(),
       };
 

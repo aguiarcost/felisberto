@@ -293,6 +293,15 @@ ${contextText ? `INFORMAÇÃO RELEVANTE:\n${contextText}` : "Não foi encontrada
       timings.resposta = Date.now() - tG;
     } catch (e) {
       const status = (e as { status?: number }).status;
+      if (status === 503) {
+        return json(
+          {
+            error:
+              "O serviço de IA está temporariamente com muita procura. Aguarde alguns segundos e tente novamente.",
+          },
+          503
+        );
+      }
       if (status === 429) {
         // Tell the two kinds of 429 apart: waiting 30s vs waiting for the daily reset.
         const msg = e instanceof Error ? e.message : "";
