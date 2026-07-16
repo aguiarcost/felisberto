@@ -317,23 +317,59 @@ ${convo}`;
 }
 
 // Embed a batch of texts to be stored (taskType RETRIEVAL_DOCUMENT).
+/** Seconds Google asks us to wait, parsed from its own 429 body. */
+export function parseRetryAfter(body: string): number {
+  const m = body.match(/retry in ([\d.]+)s/i) || body.match(/"retryDelay":\s*"([\d.]+)s"/i);
+  const v = m ? Math.ceil(parseFloat(m[1])) : 0;
+  return Number.isFinite(v) && v > 0 ? Math.min(v, 60) : 0;
+}
+
+/**
+ * Embed a batch of texts to be stored (taskType RETRIEVAL_DOCUMENT).
+ * NOTE: the free-tier embedding quota counts EACH text, not each HTTP call
+ * (limit: 100/minute). Callers must pace themselves; here we retry once on a
+ * rate limit and otherwise surface a typed 429 so the caller can requeue.
+ */
 export async function geminiEmbedDocs(env: Env, texts: string[]): Promise<number[][]> {
   const out: number[][] = [];
   for (let i = 0; i < texts.length; i += 100) {
     const batch = texts.slice(i, i + 100);
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/${EMBED_MODEL}:batchEmbedContents`, {
+    const body = JSON.stringify({
+      requests: batch.map((t) => ({
+        model: EMBED_MODEL,
+        content: { parts: [{ text: t }] },
+        taskType: "RETRIEVAL_DOCUMENT",
+        outputDimensionality: EMBED_DIM,
+      })),
+    });
+
+    let res = await fetch(`https://generativelanguage.googleapis.com/v1beta/${EMBED_MODEL}:batchEmbedContents`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-      body: JSON.stringify({
-        requests: batch.map((t) => ({
-          model: EMBED_MODEL,
-          content: { parts: [{ text: t }] },
-          taskType: "RETRIEVAL_DOCUMENT",
-          outputDimensionality: EMBED_DIM,
-        })),
-      }),
+      body,
     });
-    if (!res.ok) throw new Error(`Gemini embed ${res.status}: ${await res.text()}`);
+
+    if (res.status === 429) {
+      const txt = await res.text();
+      const wait = parseRetryAfter(txt);
+      // A short wait is worth doing inline; a long one belongs to the caller.
+      if (wait > 0 && wait <= 30) {
+        await sleep((wait + 1) * 1000);
+        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/${EMBED_MODEL}:batchEmbedContents`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+          body,
+        });
+      }
+      if (res.status === 429) {
+        const err = new Error(`Gemini embed 429: ${txt.slice(0, 200)}`);
+        (err as unknown as { status: number; retryAfter: number }).status = 429;
+        (err as unknown as { status: number; retryAfter: number }).retryAfter = wait || 30;
+        throw err;
+      }
+    }
+
+    if (!res.ok) throw new Error(`Gemini embed ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = (await res.json()) as { embeddings?: { values: number[] }[] };
     for (const e of data.embeddings ?? []) out.push(e.values);
   }

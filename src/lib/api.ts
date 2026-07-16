@@ -139,6 +139,8 @@ export interface ReindexResult {
   faqs: number;
   faqError?: string;
   remaining: number;
+  rateLimited?: boolean;
+  retryAfter?: number;
   results: { titulo: string; chunks: number; error?: string }[];
 }
 

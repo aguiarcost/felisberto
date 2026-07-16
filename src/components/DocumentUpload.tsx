@@ -43,7 +43,7 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
       let faqs = 0;
       const errors: string[] = [];
 
-      for (let pass = 0; pass < 60; pass++) {
+      for (let pass = 0; pass < 120; pass++) {
         const res = await reindexDocuments(force);
         force = false;
         docs += res.documents;
@@ -52,8 +52,22 @@ export function DocumentUpload({ onDocumentProcessed }: DocumentUploadProps) {
         res.results.filter((r) => r.error).forEach((r) => errors.push(r.titulo));
 
         if (res.remaining === 0) break;
+
+        // The embedding quota is 100 excerpts/minute. When we hit it, wait the
+        // exact time Google asks for instead of hammering it.
+        if (res.rateLimited) {
+          const wait = res.retryAfter || 30;
+          for (let s = wait; s > 0; s--) {
+            setReindexProgress(
+              `${docs} feitos, ${res.remaining} por indexar — a aguardar quota (${s}s)...`
+            );
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+          continue;
+        }
+
         setReindexProgress(`${docs} feitos, ${res.remaining} por indexar...`);
-        if (res.documents === 0) break; // nothing progressed: avoid a loop
+        if (res.documents === 0 && !res.rateLimited) break; // nothing progressed
       }
 
       if (errors.length) {

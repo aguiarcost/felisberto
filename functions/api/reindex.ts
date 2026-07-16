@@ -1,4 +1,4 @@
-import { Env, json, preflight, requireAdmin, indexDocument, indexAllFaqs } from "../_shared";
+import { Env, json, preflight, requireAdmin, indexDocument, indexAllFaqs, chunkText } from "../_shared";
 
 interface Doc {
   id: string;
@@ -7,15 +7,15 @@ interface Doc {
 }
 
 /**
- * Documents processed per call. The Workers free plan allows 50 subrequests per
- * invocation, and each document costs ~4 (embed + delete + insert + update),
- * so we stay well inside it and let the caller loop.
+ * The free-tier embedding quota counts each excerpt, not each API call
+ * (limit: 100/minute). So we pace by EXCERPTS, not by documents: a batch of
+ * 8 large regulations would be ~160 excerpts and would always be throttled.
  */
-const BATCH = 8;
+const CHUNK_BUDGET = 80;
+/** Hard cap on documents per invocation (Workers free plan: 50 subrequests). */
+const MAX_DOCS = 8;
 
 // POST /api/reindex  { force?: boolean }  [requires admin token]
-// Processes a batch of pending documents. Returns `remaining` so the caller
-// can keep calling until the whole corpus is indexed.
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const denied = await requireAdmin(request, env);
   if (denied) return denied;
@@ -23,12 +23,10 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   try {
     const body = (await request.json().catch(() => ({}))) as { force?: boolean };
 
-    // Starting a full rebuild: mark everything as pending and drop FAQ vectors.
     if (body.force) {
       await env.DB.prepare("UPDATE documentos SET estado = 'pendente', erro = NULL").run();
     }
 
-    // FAQs are few and fit in a single embedding call: do them on the first pass.
     let faqs = 0;
     let faqError: string | undefined;
     if (body.force) {
@@ -40,29 +38,46 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     }
 
     const pending = await env.DB.prepare(
-      "SELECT id, titulo, conteudo FROM documentos WHERE estado != 'concluido' LIMIT ?"
+      "SELECT id, titulo, conteudo FROM documentos WHERE estado != 'concluido' ORDER BY LENGTH(conteudo) ASC LIMIT ?"
     )
-      .bind(BATCH)
+      .bind(MAX_DOCS)
       .all<Doc>();
-    const docs = pending.results ?? [];
 
     let totalChunks = 0;
+    let rateLimited = false;
+    let retryAfter = 0;
     const results: { titulo: string; chunks: number; error?: string }[] = [];
+    let spent = 0;
 
-    for (const doc of docs) {
+    for (const doc of pending.results ?? []) {
+      // Stay inside the per-minute embedding quota.
+      const need = chunkText(doc.conteudo).length;
+      if (spent > 0 && spent + need > CHUNK_BUDGET) break;
+
       try {
         const n = await indexDocument(env, doc);
+        spent += n;
         totalChunks += n;
         results.push({ titulo: doc.titulo, chunks: n });
-        await env.DB.prepare(
-          "UPDATE documentos SET estado = 'concluido', erro = NULL WHERE id = ?"
-        )
+        await env.DB.prepare("UPDATE documentos SET estado = 'concluido', erro = NULL WHERE id = ?")
           .bind(doc.id)
           .run();
       } catch (e) {
+        const status = (e as { status?: number }).status;
         const msg = e instanceof Error ? e.message : "erro";
+
+        if (status === 429) {
+          // Transient: the quota resets in seconds. Leave it pending so the
+          // next pass picks it up — marking it "erro" was simply wrong.
+          rateLimited = true;
+          retryAfter = Math.max(retryAfter, (e as { retryAfter?: number }).retryAfter ?? 30);
+          await env.DB.prepare("UPDATE documentos SET estado = 'pendente', erro = NULL WHERE id = ?")
+            .bind(doc.id)
+            .run();
+          break;
+        }
+
         results.push({ titulo: doc.titulo, chunks: 0, error: msg });
-        // Mark as failed so the loop moves on instead of retrying forever.
         await env.DB.prepare("UPDATE documentos SET estado = 'erro', erro = ? WHERE id = ?")
           .bind(msg.slice(0, 500), doc.id)
           .run();
@@ -75,11 +90,13 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
 
     return json({
       success: true,
-      documents: docs.length,
+      documents: results.filter((r) => !r.error).length,
       totalChunks,
       faqs,
       faqError,
       remaining: left?.n ?? 0,
+      rateLimited,
+      retryAfter,
       results,
     });
   } catch (e) {
