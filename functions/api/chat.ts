@@ -56,6 +56,9 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, waitUnti
       return json({ error: "Mensagem inválida" }, 400);
     }
 
+    const t0 = Date.now();
+    const timings: Record<string, number> = {};
+
     const history: ChatTurn[] = Array.isArray(body.history)
       ? body.history
           .filter((t) => t && (t.role === "user" || t.role === "assistant") && typeof t.content === "string")
@@ -64,26 +67,37 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, waitUnti
 
     // A follow-up like "e para o segundo semestre?" is meaningless to the search
     // engine on its own, so rewrite it into a standalone question first.
+    const tC = Date.now();
     const searchQuery = await condenseQuestion(env, history, message);
+    timings.reescrita = Date.now() - tC;
 
     const allTerms = buildTerms(searchQuery);
     const normMsg = normalizeText(searchQuery).trim().replace(/\s+/g, " ");
 
-    const kbRes = await env.DB.prepare("SELECT * FROM base_conhecimento").all<FAQ>();
+    // Embedding and the three independent reads don't depend on each other,
+    // so run them together instead of paying for each round trip in sequence.
+    const tDb = Date.now();
+    const [qVec, kbRes, faqEmbRes, docMetaRes] = await Promise.all([
+      geminiEmbedQuery(env, searchQuery).catch(() => [] as number[]),
+      env.DB.prepare("SELECT * FROM base_conhecimento").all<FAQ>(),
+      env.DB.prepare("SELECT faq_id, embedding FROM faq_embeddings").all<{
+        faq_id: string;
+        embedding: string;
+      }>(),
+      env.DB.prepare("SELECT id, titulo, centroid FROM documentos").all<{
+        id: string;
+        titulo: string;
+        centroid: string | null;
+      }>(),
+    ]);
+    timings.pesquisa = Date.now() - tDb;
+
     const knowledgeBase = kbRes.results ?? [];
 
     // --- Exact match short-circuit (dropdown / copied question) ---
     const exactFaq = knowledgeBase.find(
       (f) => normalizeText(f.pergunta).trim().replace(/\s+/g, " ") === normMsg
     );
-
-    // --- Embed the query once; reused for FAQs and documents ---
-    let qVec: number[] = [];
-    try {
-      qVec = await geminiEmbedQuery(env, searchQuery);
-    } catch {
-      qVec = [];
-    }
 
     const lexScore = (haystacks: [string, number][]): number => {
       let s = 0;
@@ -97,10 +111,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, waitUnti
     /* ---------------- FAQ retrieval (hybrid) ---------------- */
     const faqSemMap = new Map<string, number>();
     if (qVec.length > 0 && knowledgeBase.length > 0) {
-      const embRes = await env.DB.prepare(
-        "SELECT faq_id, embedding FROM faq_embeddings"
-      ).all<{ faq_id: string; embedding: string }>();
-      for (const row of embRes.results ?? []) {
+      for (const row of faqEmbRes.results ?? []) {
         faqSemMap.set(row.faq_id, cosineSim(qVec, unpackVector(row.embedding)));
       }
     }
@@ -136,9 +147,6 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env, waitUnti
     let docPassages: Passage[] = [];
     let retrieval: "semantica" | "lexical" | "nenhuma" = "nenhuma";
 
-    const docMetaRes = await env.DB.prepare(
-      "SELECT id, titulo, centroid FROM documentos"
-    ).all<{ id: string; titulo: string; centroid: string | null }>();
     const docMetas = docMetaRes.results ?? [];
 
     const scoredDocs = docMetas
@@ -279,8 +287,10 @@ Baseia-te sobretudo na informação fornecida abaixo. Se ela não cobrir a pergu
 ${contextText ? `INFORMAÇÃO RELEVANTE:\n${contextText}` : "Não foi encontrada informação específica na base de conhecimento para esta pergunta."}`;
 
     let generatedResponse: string;
+    const tG = Date.now();
     try {
       generatedResponse = await geminiChatHistory(env, systemPrompt, history, message);
+      timings.resposta = Date.now() - tG;
     } catch (e) {
       const status = (e as { status?: number }).status;
       if (status === 429) {
@@ -344,12 +354,15 @@ ${contextText ? `INFORMAÇÃO RELEVANTE:\n${contextText}` : "Não foi encontrada
     if (typeof waitUntil === "function") waitUntil(logPromise);
     else await logPromise;
 
+    timings.total = Date.now() - t0;
+
     return json({
       resposta: generatedResponse,
       email: bestMatch?.email ?? null,
       modelo_email: bestMatch?.modelo_email ?? null,
       sources,
       retrieval,
+      timings,
     });
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : "Erro interno do servidor" }, 500);

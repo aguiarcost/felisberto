@@ -238,6 +238,9 @@ export async function geminiChat(
   return generateWithChain(env, models ?? chatModelChain(env), {
     system_instruction: { parts: [{ text: systemPrompt }] },
     contents: [{ role: "user", parts: [{ text: userMessage }] }],
+    // Answering from supplied context is not a reasoning task: deep thinking
+    // only adds seconds of latency here. Google's default is "medium".
+    generationConfig: { thinking_level: "low" },
   });
 }
 
@@ -263,6 +266,7 @@ export async function geminiChatHistory(
   return generateWithChain(env, chatModelChain(env), {
     system_instruction: { parts: [{ text: systemPrompt }] },
     contents,
+    generationConfig: { thinking_level: "low" },
   });
 }
 
@@ -276,6 +280,13 @@ export async function condenseQuestion(
   message: string
 ): Promise<string> {
   if (history.length === 0) return message;
+  // A self-contained question needs no rewriting: skipping saves a whole
+  // round trip (~1s) on most follow-ups.
+  const words = message.trim().split(/\s+/);
+  const anaphoric = /^(e|mas|entao|então|ok|sim|nao|não|isso|esse|essa|este|esta|ele|ela|isto|porque|porquê|porque\?)\b/i.test(
+    message.trim()
+  );
+  if (words.length >= 6 && !anaphoric) return message;
   const convo = history
     .map((t) => `${t.role === "user" ? "Utilizador" : "Assistente"}: ${t.content}`)
     .join("\n");
@@ -559,11 +570,28 @@ interface GenResult {
 }
 
 async function callGenerate(env: Env, model: string, payload: unknown): Promise<GenResult> {
-  const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
+  let res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
     body: JSON.stringify(payload),
   });
+
+  // thinking_level only exists on Gemini 3.x. If a configured model rejects it,
+  // retry once without the config rather than failing the request.
+  if (res.status === 400) {
+    const body = await res.clone().text();
+    if (/thinking/i.test(body)) {
+      const p = { ...(payload as Record<string, unknown>) };
+      const gc = { ...((p.generationConfig as Record<string, unknown>) ?? {}) };
+      delete gc.thinking_level;
+      p.generationConfig = Object.keys(gc).length ? gc : undefined;
+      res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+        body: JSON.stringify(p),
+      });
+    }
+  }
   if (res.status === 429) {
     const body = await res.text();
     return { ok: false, status: 429, daily: isDailyQuota(body), body };
@@ -651,8 +679,10 @@ export async function geminiExtractPdf(env: Env, base64: string): Promise<string
           },
         ],
         // Long regulations need plenty of output room; without this the model
-        // silently truncates and can return nothing at all.
-        generationConfig: { maxOutputTokens: 65536, temperature: 0 },
+        // silently truncates and can return nothing at all. Transcribing text
+        // needs no reasoning, and Google advises against sending temperature
+        // to Gemini 3.x models.
+        generationConfig: { maxOutputTokens: 65536, thinking_level: "minimal" },
       }),
     });
 
